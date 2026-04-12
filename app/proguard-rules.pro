@@ -1,0 +1,2 @@
+-keep class me.nettrash.geo.data.model.** { *; }
+-keepattributes *Annotation*
