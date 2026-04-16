@@ -86,7 +86,7 @@ class PeakFinder @Inject constructor() {
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) return emptyList()
 
-            val body = response.body?.string() ?: return emptyList()
+            val body = response.body.string()
             val result = json.decodeFromString<OverpassResponse>(body)
 
             result.elements.mapNotNull { element ->

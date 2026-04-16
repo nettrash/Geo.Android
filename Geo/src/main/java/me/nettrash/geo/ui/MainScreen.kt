@@ -20,7 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import me.nettrash.geo.ui.info.InfoScreen
 import me.nettrash.geo.ui.map.MapScreen
 import me.nettrash.geo.ui.nature.NatureScreen

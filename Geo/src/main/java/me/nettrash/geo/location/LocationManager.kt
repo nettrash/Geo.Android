@@ -23,7 +23,7 @@ import kotlin.math.sqrt
 
 @Singleton
 class LocationManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)

@@ -24,4 +24,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Geo"
-include(":app")
+include(":Geo")

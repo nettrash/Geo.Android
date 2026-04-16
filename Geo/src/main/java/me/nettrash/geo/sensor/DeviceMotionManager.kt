@@ -14,7 +14,7 @@ import javax.inject.Singleton
 
 @Singleton
 class DeviceMotionManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : SensorEventListener {
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
