@@ -1,0 +1,9 @@
+Where you are, what's around you, and how high.
+
+• Live altitude from barometer + GPS, side-by-side.
+• Nearby peaks: the Seven Summits and the world's tallest 100, with photos and elevations.
+• Map view pinning your position alongside famous peaks nearby.
+• AR view (where supported) with peak names on the camera.
+• Home-screen widget: pressure, altitude, position, speed.
+• Local pressure history.
+• On-device. No tracking. No ads.

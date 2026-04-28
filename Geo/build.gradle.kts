@@ -131,6 +131,13 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests {
+            // Robolectric needs Android resources + the system AndroidManifest.
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
     packaging {
         jniLibs {
             keepDebugSymbols += setOf(
@@ -190,6 +197,11 @@ dependencies {
     implementation(libs.androidx.glance.material3)
 
     debugImplementation(libs.androidx.ui.tooling)
+
+    // Unit tests — JUnit 4 + Robolectric for anything touching android.* APIs.
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.truth)
 }
 
 // ---- versionCode auto-bump ----------------------------------------------
