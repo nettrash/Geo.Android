@@ -2,6 +2,7 @@ package me.nettrash.geo.ui.info
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import me.nettrash.geo.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -46,12 +50,23 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
     val context = LocalContext.current
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
             .background(Color.Black)
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.geo_big),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            alpha = 0.02f,
+            modifier = Modifier.fillMaxSize()
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        ) {
         // BAROMETER section
         InfoCard(watermark = "B A R O M E T E R") {
             InfoRow("Pressure") {
@@ -174,7 +189,8 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-    }
+        } // Column
+    } // Box
 }
 
 @Composable

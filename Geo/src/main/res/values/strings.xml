@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Geo</string>
+    <string name="widget_description">Shows barometer pressure, altitude, GPS position and speed.</string>
 </resources>

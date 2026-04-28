@@ -1,9 +1,12 @@
 package me.nettrash.geo.ui
 
+import android.content.Context
 import android.location.Location
+import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,11 +25,14 @@ import me.nettrash.geo.sensor.DeviceMotionManager
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.MountainLoader
 import me.nettrash.geo.util.PeakFinder
+import me.nettrash.geo.widget.GeoWidget
+import me.nettrash.geo.widget.WidgetDataStore
 import java.util.Date
 import javax.inject.Inject
 
 @HiltViewModel
 class GeoViewModel @Inject constructor(
+    @param:ApplicationContext private val appContext: Context,
     val barometerManager: BarometerManager,
     val locationManager: LocationManager,
     val motionManager: DeviceMotionManager,
@@ -34,6 +40,10 @@ class GeoViewModel @Inject constructor(
     private val mountainLoader: MountainLoader,
     private val peakFinder: PeakFinder
 ) : ViewModel() {
+
+    // Throttle widget refreshes to at most once per 30 s
+    private var lastWidgetUpdateMs = 0L
+    private val widgetUpdateIntervalMs = 30_000L
 
     // Mountain data
     private val _mountainsData = MutableStateFlow<MountainData?>(null)
@@ -98,6 +108,7 @@ class GeoViewModel @Inject constructor(
                 barometerManager.pressure.value,
                 barometerManager.height.value
             )
+            updateWidget()
         }
         barometerManager.start()
 
@@ -107,6 +118,9 @@ class GeoViewModel @Inject constructor(
         }
         locationManager.onTrackingUpdate = { loc ->
             addTrackingPoint(loc)
+        }
+        locationManager.onLocationUpdated = { _ ->
+            updateWidget()
         }
         locationManager.startLocationUpdates()
 
@@ -201,6 +215,26 @@ class GeoViewModel @Inject constructor(
                     bearing = bearing
                 )
             }
+        }
+    }
+
+    private fun updateWidget() {
+        val now = System.currentTimeMillis()
+        if (now - lastWidgetUpdateMs < widgetUpdateIntervalMs) return
+        lastWidgetUpdateMs = now
+
+        val loc = locationManager.location.value
+        WidgetDataStore.write(
+            context     = appContext,
+            pressureKpa = barometerManager.pressure.value,
+            barAltitude = barometerManager.height.value,
+            gpsAltitude = loc?.altitude ?: 0.0,
+            gpsSpeed    = maxOf(loc?.speed?.toDouble() ?: 0.0, 0.0),
+            gpsLat      = loc?.latitude ?: 0.0,
+            gpsLon      = loc?.longitude ?: 0.0
+        )
+        viewModelScope.launch {
+            GeoWidget().updateAll(appContext)
         }
     }
 

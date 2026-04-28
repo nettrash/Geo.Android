@@ -41,6 +41,39 @@
             </intent-filter>
         </activity>
 
+        <!-- Home screen widget -->
+        <receiver
+            android:name=".widget.GeoWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/geo_widget_info" />
+        </receiver>
+
+        <!--
+            GeoApplication implements androidx.work.Configuration.Provider so
+            WorkManager initialises on demand with our HiltWorkerFactory. The
+            androidx.work AAR otherwise auto-merges its default
+            WorkManagerInitializer into androidx.startup's
+            InitializationProvider, which would race with the on-demand init
+            and trigger lint's RemoveWorkManagerInitializer fatal. We merge
+            into the existing InitializationProvider node and drop the
+            WorkManagerInitializer meta-data.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
     </application>
 
 </manifest>

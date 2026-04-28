@@ -1,6 +1,8 @@
 package me.nettrash.geo.ui.stat
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,7 +17,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import me.nettrash.geo.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nettrash.geo.data.model.GraphLine
@@ -46,13 +51,24 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val seaLevelLine = GraphLine(0f, "sea level", 0xFF0000FF)
     val normalPressureLine = GraphLine(760f, "normal", 0xFF4CAF50)
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .background(Color.Black),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(Color.Black)
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.geo_big),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            alpha = 0.02f,
+            modifier = Modifier.fillMaxSize()
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         Text(
             "TRACKING",
             fontSize = 24.sp,
@@ -126,5 +142,6 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         )
 
         Spacer(modifier = Modifier.height(16.dp))
-    }
+        } // Column
+    } // Box
 }
