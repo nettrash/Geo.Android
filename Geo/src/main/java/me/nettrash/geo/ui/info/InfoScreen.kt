@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import me.nettrash.geo.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -68,34 +69,34 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 .verticalScroll(rememberScrollState())
         ) {
         // BAROMETER section
-        InfoCard(watermark = "B A R O M E T E R") {
-            InfoRow("Pressure") {
+        InfoCard(watermark = stringResource(R.string.section_barometer)) {
+            InfoRow(stringResource(R.string.field_pressure)) {
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.4f", pressure)} kPa")
                     MonoText("${String.format(Locale.US, "%.4f", pressure * 7.50062)} mm Hg")
                     MonoText("${String.format(Locale.US, "%.4f", pressure / 101.325)} atm")
                 }
             }
-            InfoRow("Altitude") {
+            InfoRow(stringResource(R.string.field_altitude)) {
                 MonoText("${String.format(Locale.US, "%.0f", height)} m")
             }
-            InfoRow("% Everest") {
+            InfoRow(stringResource(R.string.field_percent_everest)) {
                 MonoText("${String.format(Locale.US, "%.4f", everest * 100.0)} %")
             }
         }
 
         // SATELLITE section
-        InfoCard(watermark = "S A T E L L I T E") {
-            InfoRow("Coordinates") {
+        InfoCard(watermark = stringResource(R.string.section_satellite)) {
+            InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.6f", location?.latitude ?: 0.0)} lt")
                     MonoText("${String.format(Locale.US, "%.6f", location?.longitude ?: 0.0)} lg")
                 }
             }
-            InfoRow("Altitude") {
+            InfoRow(stringResource(R.string.field_altitude)) {
                 MonoText("${String.format(Locale.US, "%.0f", location?.altitude ?: 0.0)} m")
             }
-            InfoRow("Velocity") {
+            InfoRow(stringResource(R.string.field_velocity)) {
                 val speed = maxOf(location?.speed?.toDouble() ?: 0.0, 0.0)
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.1f", speed)} m/s")
@@ -105,17 +106,18 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
 
         // CLOSEST MOUNTAIN section
-        InfoCard(watermark = "CLOSEST MOUNTAIN") {
-            InfoRow("Name") {
+        val unknown = stringResource(R.string.fallback_unknown)
+        InfoCard(watermark = stringResource(R.string.section_closest_mountain)) {
+            InfoRow(stringResource(R.string.field_name)) {
                 Column(horizontalAlignment = Alignment.End) {
-                    MonoText(closestMountain?.name ?: "?")
+                    MonoText(closestMountain?.name ?: unknown)
                     MonoText("${closestMountain?.height ?: 0} m")
                 }
             }
-            InfoRow("Distance") {
+            InfoRow(stringResource(R.string.field_distance)) {
                 MonoText("${String.format(Locale.US, "%.2f", (closestDistance ?: 0.0) / 1000.0)} km")
             }
-            InfoRow("Coordinates") {
+            InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.6f", closestMountain?.coordinates?.latitude ?: 0.0)} lt")
                     MonoText("${String.format(Locale.US, "%.6f", closestMountain?.coordinates?.longitude ?: 0.0)} lg")
@@ -141,23 +143,27 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Directions", fontSize = 12.sp, color = Color.White)
+                    Text(
+                        stringResource(R.string.action_directions),
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
                 }
             }
         }
 
         // HIGHEST MOUNTAIN section
-        InfoCard(watermark = "HIGHEST MOUNTAIN") {
-            InfoRow("Name") {
+        InfoCard(watermark = stringResource(R.string.section_highest_mountain)) {
+            InfoRow(stringResource(R.string.field_name)) {
                 Column(horizontalAlignment = Alignment.End) {
-                    MonoText(highestMountain?.name ?: "?")
+                    MonoText(highestMountain?.name ?: unknown)
                     MonoText("${highestMountain?.height ?: 0} m")
                 }
             }
-            InfoRow("Distance") {
+            InfoRow(stringResource(R.string.field_distance)) {
                 MonoText("${String.format(Locale.US, "%.2f", (highestDistance ?: 0.0) / 1000.0)} km")
             }
-            InfoRow("Coordinates") {
+            InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.6f", highestMountain?.coordinates?.latitude ?: 0.0)} lt")
                     MonoText("${String.format(Locale.US, "%.6f", highestMountain?.coordinates?.longitude ?: 0.0)} lg")
@@ -183,7 +189,11 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Directions", fontSize = 12.sp, color = Color.White)
+                    Text(
+                        stringResource(R.string.action_directions),
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
                 }
             }
         }

@@ -130,6 +130,9 @@ android {
     }
     buildFeatures {
         compose = true
+        // AppLog gates debug() on BuildConfig.DEBUG, so we need the
+        // generated BuildConfig class.
+        buildConfig = true
     }
     testOptions {
         unitTests {
@@ -152,6 +155,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
@@ -178,6 +182,9 @@ dependencies {
     implementation(libs.play.services.maps)
     implementation(libs.play.services.location)
 
+    // Wear OS messaging (phone-side bridge to the paired watch).
+    implementation(libs.play.services.wearable)
+
     // ARCore
     implementation(libs.arcore)
     implementation(libs.sceneview)
@@ -202,6 +209,46 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.truth)
+}
+
+// ---- IDE compatibility: `unitTestClasses` / `androidTestClasses` aliases ----
+//
+// AGP 9 stopped creating the legacy aggregate `unitTestClasses` and
+// `androidTestClasses` tasks and only registers the variant-specific
+// compile tasks (`compileDebugUnitTestKotlin`,
+// `compileDebugAndroidTestKotlin`, etc). Android Studio's "Make
+// Project" / Gradle sync still tries to invoke
+//   :Geo:unitTestClasses
+//   :Geo:androidTestClasses
+// on some code paths and fails with
+//   "Cannot locate tasks that match ':Geo:<x>TestClasses'".
+// Register thin aliases so the IDE is happy. Pure aggregators — no
+// actions of their own, just dependsOn the per-variant compile tasks.
+afterEvaluate {
+    if (tasks.findByName("unitTestClasses") == null) {
+        tasks.register("unitTestClasses") {
+            group = "verification"
+            description =
+                "Compatibility alias — depends on all variant-specific unit-test compile tasks."
+            dependsOn(tasks.matching {
+                val n = it.name
+                n.startsWith("compile") &&
+                    (n.endsWith("UnitTestKotlin") || n.endsWith("UnitTestJavaWithJavac"))
+            })
+        }
+    }
+    if (tasks.findByName("androidTestClasses") == null) {
+        tasks.register("androidTestClasses") {
+            group = "verification"
+            description =
+                "Compatibility alias — depends on all variant-specific instrumented-test compile tasks."
+            dependsOn(tasks.matching {
+                val n = it.name
+                n.startsWith("compile") &&
+                    (n.endsWith("AndroidTestKotlin") || n.endsWith("AndroidTestJavaWithJavac"))
+            })
+        }
+    }
 }
 
 // ---- versionCode auto-bump ----------------------------------------------

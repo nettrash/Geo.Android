@@ -1,0 +1,94 @@
+{
+    "logs": [
+        {
+            "outputFile": "me.nettrash.geo.wear-mergeDebugResources-38:/values-pa/values-pa.xml",
+            "map": [
+                {
+                    "source": "/Users/nettrash/.gradle/caches/9.4.1/transforms/72e3017718cb32308e0ae33203720c5e/transformed/ui/res/values-pa/values-pa.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "105,199,292,375,467,566,654,732,830,918,1002,1081,1162,1234,1317,1392,1467,1542,1622,1688",
+                        "endColumns": "93,92,82,91,98,87,77,97,87,83,78,80,71,82,74,74,74,79,65,117",
+                        "endOffsets": "194,287,370,462,561,649,727,825,913,997,1076,1157,1229,1312,1387,1462,1537,1617,1683,1801"
+                    },
+                    "to": {
+                        "startLines": "3,11,12,31,32,33,34,35,36,37,38,39,40,41,42,43,44,46,47,48",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "207,1031,1124,3472,3564,3663,3751,3829,3927,4015,4099,4178,4259,4331,4414,4489,4564,4740,4820,4886",
+                        "endColumns": "93,92,82,91,98,87,77,97,87,83,78,80,71,82,74,74,74,79,65,117",
+                        "endOffsets": "296,1119,1202,3559,3658,3746,3824,3922,4010,4094,4173,4254,4326,4409,4484,4559,4634,4815,4881,4999"
+                    }
+                },
+                {
+                    "source": "/Users/nettrash/.gradle/caches/9.4.1/transforms/4819a1393e1722aa2eb1784d939c4aaa/transformed/foundation/res/values-pa/values-pa.xml",
+                    "from": {
+                        "startLines": "2,3,4",
+                        "startColumns": "4,4,4",
+                        "startOffsets": "55,157,244",
+                        "endColumns": "101,86,86",
+                        "endOffsets": "152,239,326"
+                    },
+                    "to": {
+                        "startLines": "2,49,50",
+                        "startColumns": "4,4,4",
+                        "startOffsets": "105,5004,5091",
+                        "endColumns": "101,86,86",
+                        "endOffsets": "202,5086,5173"
+                    }
+                },
+                {
+                    "source": "/Users/nettrash/.gradle/caches/9.4.1/transforms/6796962323a2fe840ff9a0fae7006cf2/transformed/core-1.18.0/res/values-pa/values-pa.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "55,153,255,355,456,558,656,785",
+                        "endColumns": "97,101,99,100,101,97,128,100",
+                        "endOffsets": "148,250,350,451,553,651,780,881"
+                    },
+                    "to": {
+                        "startLines": "4,5,6,7,8,9,10,45",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "301,399,501,601,702,804,902,4639",
+                        "endColumns": "97,101,99,100,101,97,128,100",
+                        "endOffsets": "394,496,596,697,799,897,1026,4735"
+                    }
+                },
+                {
+                    "source": "/Users/nettrash/.gradle/caches/9.4.1/transforms/bf12619cfae79d6ddb192a9d0c51c792/transformed/play-services-base-18.5.0/res/values-pa/values.xml",
+                    "from": {
+                        "startLines": "4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20",
+                        "startColumns": "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0",
+                        "startOffsets": "193,296,465,591,696,839,964,1073,1172,1330,1435,1604,1732,1881,2038,2099,2161",
+                        "endColumns": "102,168,125,104,142,124,108,98,157,104,168,127,148,156,60,61,77",
+                        "endOffsets": "295,464,590,695,838,963,1072,1171,1329,1434,1603,1731,1880,2037,2098,2160,2238"
+                    },
+                    "to": {
+                        "startLines": "13,14,15,16,17,18,19,20,22,23,24,25,26,27,28,29,30",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "1207,1314,1487,1617,1726,1873,2002,2115,2369,2531,2640,2813,2945,3098,3259,3324,3390",
+                        "endColumns": "106,172,129,108,146,128,112,102,161,108,172,131,152,160,64,65,81",
+                        "endOffsets": "1309,1482,1612,1721,1868,1997,2110,2213,2526,2635,2808,2940,3093,3254,3319,3385,3467"
+                    }
+                },
+                {
+                    "source": "/Users/nettrash/.gradle/caches/9.4.1/transforms/2482b73814a706d32eacb17c7f756d79/transformed/play-services-basement-18.4.0/res/values-pa/values.xml",
+                    "from": {
+                        "startLines": "4",
+                        "startColumns": "0",
+                        "startOffsets": "195",
+                        "endColumns": "146",
+                        "endOffsets": "341"
+                    },
+                    "to": {
+                        "startLines": "21",
+                        "startColumns": "4",
+                        "startOffsets": "2218",
+                        "endColumns": "150",
+                        "endOffsets": "2364"
+                    }
+                }
+            ]
+        }
+    ]
+}

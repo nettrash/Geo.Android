@@ -1,0 +1,221 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="me.nettrash.geo"
+4    android:versionCode="7"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+7-->INJECTED
+8        android:minSdkVersion="30"
+8-->INJECTED
+9        android:targetSdkVersion="36" />
+9-->INJECTED
+10
+11    <!--
+12        Mirrors iOS Geo-Watch-App-Info.plist:
+13          • NSMotionUsageDescription → HIGH_SAMPLING_RATE_SENSORS
+14            for the barometer.
+15        The iOS watch is paired-only; the Wear OS equivalent is the
+16        `standalone` meta-data flag below. Setting it to false means
+17        users must have the companion phone app installed too.
+18    -->
+19    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+19-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:13:5-85
+19-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:13:22-82
+20    <uses-permission android:name="android.permission.WAKE_LOCK" />
+20-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:14:5-68
+20-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:14:22-65
+21
+22    <uses-feature android:name="android.hardware.type.watch" />
+22-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:16:5-64
+22-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:16:19-61
+23    <uses-feature
+23-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:17:5-95
+24        android:name="android.hardware.sensor.barometer"
+24-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:17:19-67
+25        android:required="false" />
+25-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:17:68-92
+26
+27    <permission
+27-->[androidx.core:core:1.18.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/6796962323a2fe840ff9a0fae7006cf2/transformed/core-1.18.0/AndroidManifest.xml:22:5-24:47
+28        android:name="me.nettrash.geo.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+28-->[androidx.core:core:1.18.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/6796962323a2fe840ff9a0fae7006cf2/transformed/core-1.18.0/AndroidManifest.xml:23:9-81
+29        android:protectionLevel="signature" />
+29-->[androidx.core:core:1.18.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/6796962323a2fe840ff9a0fae7006cf2/transformed/core-1.18.0/AndroidManifest.xml:24:9-44
+30
+31    <uses-permission android:name="me.nettrash.geo.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+31-->[androidx.core:core:1.18.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/6796962323a2fe840ff9a0fae7006cf2/transformed/core-1.18.0/AndroidManifest.xml:26:5-97
+31-->[androidx.core:core:1.18.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/6796962323a2fe840ff9a0fae7006cf2/transformed/core-1.18.0/AndroidManifest.xml:26:22-94
+32
+33    <application
+33-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:19:5-56:19
+34        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+34-->[androidx.core:core:1.18.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/6796962323a2fe840ff9a0fae7006cf2/transformed/core-1.18.0/AndroidManifest.xml:28:18-86
+35        android:debuggable="true"
+36        android:extractNativeLibs="false"
+36-->INJECTED
+37        android:label="Geo"
+37-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:20:9-28
+38        android:supportsRtl="true"
+38-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:21:9-35
+39        android:theme="@android:style/Theme.DeviceDefault" >
+39-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:22:9-59
+40        <meta-data
+40-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:25:9-27:37
+41            android:name="com.google.android.wearable.standalone"
+41-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:26:13-66
+42            android:value="false" />
+42-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:27:13-34
+43
+44        <activity
+44-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:29:9-37:20
+45            android:name="me.nettrash.geo.wear.WearMainActivity"
+45-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:30:13-45
+46            android:exported="true"
+46-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:31:13-36
+47            android:theme="@android:style/Theme.DeviceDefault" >
+47-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:32:13-63
+48            <intent-filter>
+48-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:33:13-36:29
+49                <action android:name="android.intent.action.MAIN" />
+49-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:34:17-69
+49-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:34:25-66
+50
+51                <category android:name="android.intent.category.LAUNCHER" />
+51-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:35:17-77
+51-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:35:27-74
+52            </intent-filter>
+53        </activity>
+54
+55        <!--
+56            Listens for snapshot payloads pushed by the phone (matches
+57            iOS WatchConnectivityManager inbound flow). Receives
+58            messages on path `/geo/snapshot` and updates a shared
+59            in-process store the UI subscribes to.
+60        -->
+61        <service
+61-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:45:9-55:19
+62            android:name="me.nettrash.geo.wear.WearableSnapshotListener"
+62-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:46:13-53
+63            android:exported="true" >
+63-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:47:13-36
+64            <intent-filter>
+64-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:48:13-54:29
+65                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+65-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:49:17-91
+65-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:49:25-88
+66
+67                <data
+67-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:50:17-53:50
+68                    android:host="*"
+68-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:52:21-37
+69                    android:pathPrefix="/geo/"
+69-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:53:21-47
+70                    android:scheme="wear" />
+70-->/Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/AndroidManifest.xml:51:21-42
+71            </intent-filter>
+72        </service>
+73
+74        <activity
+74-->[com.google.android.gms:play-services-base:18.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/bf12619cfae79d6ddb192a9d0c51c792/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:9-173
+75            android:name="com.google.android.gms.common.api.GoogleApiActivity"
+75-->[com.google.android.gms:play-services-base:18.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/bf12619cfae79d6ddb192a9d0c51c792/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:19-85
+76            android:exported="false"
+76-->[com.google.android.gms:play-services-base:18.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/bf12619cfae79d6ddb192a9d0c51c792/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:146-170
+77            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+77-->[com.google.android.gms:play-services-base:18.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/bf12619cfae79d6ddb192a9d0c51c792/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:86-145
+78
+79        <meta-data
+79-->[com.google.android.gms:play-services-basement:18.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/2482b73814a706d32eacb17c7f756d79/transformed/play-services-basement-18.4.0/AndroidManifest.xml:6:9-122
+80            android:name="com.google.android.gms.version"
+80-->[com.google.android.gms:play-services-basement:18.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/2482b73814a706d32eacb17c7f756d79/transformed/play-services-basement-18.4.0/AndroidManifest.xml:6:20-65
+81            android:value="@integer/google_play_services_version" />
+81-->[com.google.android.gms:play-services-basement:18.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/2482b73814a706d32eacb17c7f756d79/transformed/play-services-basement-18.4.0/AndroidManifest.xml:6:66-119
+82
+83        <uses-library
+83-->[androidx.wear.compose:compose-foundation:1.5.4] /Users/nettrash/.gradle/caches/9.4.1/transforms/b6bc859dc2b8635a3874308b1add61bb/transformed/compose-foundation-1.5.4/AndroidManifest.xml:23:9-25:40
+84            android:name="wear-sdk"
+84-->[androidx.wear.compose:compose-foundation:1.5.4] /Users/nettrash/.gradle/caches/9.4.1/transforms/b6bc859dc2b8635a3874308b1add61bb/transformed/compose-foundation-1.5.4/AndroidManifest.xml:24:13-36
+85            android:required="false" />
+85-->[androidx.wear.compose:compose-foundation:1.5.4] /Users/nettrash/.gradle/caches/9.4.1/transforms/b6bc859dc2b8635a3874308b1add61bb/transformed/compose-foundation-1.5.4/AndroidManifest.xml:25:13-37
+86        <uses-library
+86-->[androidx.window:window:1.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/80ae9bda86d3b5b313c6b452e32c1b9e/transformed/window-1.5.0/AndroidManifest.xml:23:9-25:40
+87            android:name="androidx.window.extensions"
+87-->[androidx.window:window:1.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/80ae9bda86d3b5b313c6b452e32c1b9e/transformed/window-1.5.0/AndroidManifest.xml:24:13-54
+88            android:required="false" />
+88-->[androidx.window:window:1.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/80ae9bda86d3b5b313c6b452e32c1b9e/transformed/window-1.5.0/AndroidManifest.xml:25:13-37
+89        <uses-library
+89-->[androidx.window:window:1.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/80ae9bda86d3b5b313c6b452e32c1b9e/transformed/window-1.5.0/AndroidManifest.xml:26:9-28:40
+90            android:name="androidx.window.sidecar"
+90-->[androidx.window:window:1.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/80ae9bda86d3b5b313c6b452e32c1b9e/transformed/window-1.5.0/AndroidManifest.xml:27:13-51
+91            android:required="false" />
+91-->[androidx.window:window:1.5.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/80ae9bda86d3b5b313c6b452e32c1b9e/transformed/window-1.5.0/AndroidManifest.xml:28:13-37
+92
+93        <provider
+93-->[androidx.emoji2:emoji2:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/9206e96ed29814095281afa90ef2ed2b/transformed/emoji2-1.4.0/AndroidManifest.xml:24:9-32:20
+94            android:name="androidx.startup.InitializationProvider"
+94-->[androidx.emoji2:emoji2:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/9206e96ed29814095281afa90ef2ed2b/transformed/emoji2-1.4.0/AndroidManifest.xml:25:13-67
+95            android:authorities="me.nettrash.geo.androidx-startup"
+95-->[androidx.emoji2:emoji2:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/9206e96ed29814095281afa90ef2ed2b/transformed/emoji2-1.4.0/AndroidManifest.xml:26:13-68
+96            android:exported="false" >
+96-->[androidx.emoji2:emoji2:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/9206e96ed29814095281afa90ef2ed2b/transformed/emoji2-1.4.0/AndroidManifest.xml:27:13-37
+97            <meta-data
+97-->[androidx.emoji2:emoji2:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/9206e96ed29814095281afa90ef2ed2b/transformed/emoji2-1.4.0/AndroidManifest.xml:29:13-31:52
+98                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+98-->[androidx.emoji2:emoji2:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/9206e96ed29814095281afa90ef2ed2b/transformed/emoji2-1.4.0/AndroidManifest.xml:30:17-75
+99                android:value="androidx.startup" />
+99-->[androidx.emoji2:emoji2:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/9206e96ed29814095281afa90ef2ed2b/transformed/emoji2-1.4.0/AndroidManifest.xml:31:17-49
+100            <meta-data
+100-->[androidx.lifecycle:lifecycle-process:2.10.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/eb1896a359ec903841c19f02e219f0ac/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:29:13-31:52
+101                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+101-->[androidx.lifecycle:lifecycle-process:2.10.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/eb1896a359ec903841c19f02e219f0ac/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:30:17-78
+102                android:value="androidx.startup" />
+102-->[androidx.lifecycle:lifecycle-process:2.10.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/eb1896a359ec903841c19f02e219f0ac/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:31:17-49
+103            <meta-data
+103-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:29:13-31:52
+104                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+104-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:30:17-85
+105                android:value="androidx.startup" />
+105-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:31:17-49
+106        </provider>
+107
+108        <receiver
+108-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:34:9-52:20
+109            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+109-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:35:13-76
+110            android:directBootAware="false"
+110-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:36:13-44
+111            android:enabled="true"
+111-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:37:13-35
+112            android:exported="true"
+112-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:38:13-36
+113            android:permission="android.permission.DUMP" >
+113-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:39:13-57
+114            <intent-filter>
+114-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:40:13-42:29
+115                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+115-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:41:17-91
+115-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:41:25-88
+116            </intent-filter>
+117            <intent-filter>
+117-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:43:13-45:29
+118                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+118-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:44:17-85
+118-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:44:25-82
+119            </intent-filter>
+120            <intent-filter>
+120-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:46:13-48:29
+121                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+121-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:47:17-88
+121-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:47:25-85
+122            </intent-filter>
+123            <intent-filter>
+123-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:49:13-51:29
+124                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+124-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:50:17-95
+124-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/nettrash/.gradle/caches/9.4.1/transforms/a0c0dfa4ff2dd660f14719209879d5bf/transformed/profileinstaller-1.4.0/AndroidManifest.xml:50:25-92
+125            </intent-filter>
+126        </receiver>
+127    </application>
+128
+129</manifest>

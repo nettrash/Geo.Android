@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Русский перевод. Ключи должны совпадать с values/strings.xml
+        (и iOS Localizable.strings) — добавляйте новые пары здесь и
+        там одновременно.
+    -->
+
+    <string name="app_name">Geo</string>
+    <string name="widget_description">Давление, высота, GPS-координаты и скорость.</string>
+
+    <!-- Вкладки -->
+    <string name="tab_info">Инфо</string>
+    <string name="tab_stat">Статистика</string>
+    <string name="tab_map">Карта</string>
+    <string name="tab_nature">Природа</string>
+
+    <!-- Заголовки секций -->
+    <string name="section_barometer">Б А Р О М Е Т Р</string>
+    <string name="section_satellite">С П У Т Н И К</string>
+    <string name="section_closest_mountain">БЛИЖАЙШАЯ ВЕРШИНА</string>
+    <string name="section_highest_mountain">САМАЯ ВЫСОКАЯ ВЕРШИНА</string>
+    <string name="section_tracking">ТРЕКИНГ</string>
+    <string name="section_statistics">СТАТИСТИКА</string>
+
+    <!-- Поля -->
+    <string name="field_name">Название</string>
+    <string name="field_altitude">Высота</string>
+    <string name="field_pressure">Давление</string>
+    <string name="field_coordinates">Координаты</string>
+    <string name="field_distance">Расстояние</string>
+    <string name="field_velocity">Скорость</string>
+    <string name="field_geography">География</string>
+    <string name="field_mountain">Вершина</string>
+    <string name="field_percent_everest">% Эвереста</string>
+    <string name="field_height">Высота</string>
+    <string name="field_region">Регион</string>
+    <string name="field_country">Страна</string>
+    <string name="field_location">Расположение</string>
+    <string name="field_first_ascent">Первое восхождение</string>
+
+    <!-- Кнопки -->
+    <string name="action_directions">Маршрут</string>
+    <string name="action_show_map">Показать на карте</string>
+    <string name="action_continue">Продолжить</string>
+    <string name="action_open_settings">Открыть настройки</string>
+    <string name="action_cancel">Отмена</string>
+
+    <!-- Заглушки -->
+    <string name="fallback_loading">Загрузка…</string>
+    <string name="fallback_unknown">?</string>
+    <string name="fallback_first_ascent_unknown">первое восхождение неизвестно</string>
+
+    <!-- Подробности истории -->
+    <string name="history_details_title">Точка истории</string>
+    <string name="history_barometer">Барометр</string>
+    <string name="history_satellite">Спутник</string>
+
+    <!-- Линии графиков -->
+    <string name="graph_thin_air">разрежённый воздух</string>
+    <string name="graph_death_zone">зона смерти</string>
+    <string name="graph_sea_level">уровень моря</string>
+    <string name="graph_normal">норма</string>
+    <string name="graph_legend_barometer">барометр</string>
+    <string name="graph_legend_gps">gps</string>
+    <string name="graph_caption_tracking_altitude">ВЫСОТА ТРЕКИНГ</string>
+    <string name="graph_caption_pressure">ДАВЛЕНИЕ</string>
+    <string name="graph_caption_altitude_barometer">ВЫСОТА БАРОМЕТР</string>
+    <string name="graph_caption_altitude_gps">ВЫСОТА GPS</string>
+
+    <!-- AR / вкладка Природа -->
+    <string name="ar_about_title">О режиме «Природа»</string>
+    <string name="ar_about_undetermined">Режим «Природа» накладывает информацию о ближайших вершинах поверх изображения с камеры. Нажмите «Продолжить», чтобы решить, разрешать ли доступ к камере.</string>
+    <string name="ar_about_denied">Режим «Природа» накладывает информацию о ближайших вершинах поверх изображения с камеры. Доступ к камере сейчас отключён. Включите его в настройках Android и вернитесь на эту вкладку.</string>
+    <string name="ar_unavailable_title">ARCore недоступен</string>
+    <string name="ar_unavailable_detail">Это устройство не поддерживает ARCore.</string>
+    <string name="ar_status_scanning">Сканирование</string>
+    <string name="ar_status_skyline">Горизонт</string>
+    <string name="ar_status_depth">Глубина</string>
+    <string name="ar_distance_source_depth">Глубина</string>
+    <string name="ar_distance_source_plane">Плоскость</string>
+    <string name="ar_distance_source_raycast">Луч</string>
+    <string name="ar_distance_unknown">--</string>
+
+    <!-- Баннер разрешений -->
+    <string name="permissions_banner_headline_both">Нужны доступы к геопозиции и датчикам</string>
+    <string name="permissions_banner_headline_location">Нужен доступ к геопозиции</string>
+    <string name="permissions_banner_headline_motion">Нужен доступ к датчикам</string>
+    <string name="permissions_banner_detail_both">Нажмите, чтобы включить геопозицию и датчики в настройках.</string>
+    <string name="permissions_banner_detail_location">Нажмите, чтобы включить геопозицию — без неё не работают карта и поиск вершин.</string>
+    <string name="permissions_banner_detail_motion">Нажмите, чтобы включить датчики — без них не работает барометрическая высота.</string>
+    <string name="permissions_banner_open_settings">Открыть настройки</string>
+
+    <!-- Виджет -->
+    <string name="widget_title">GEO</string>
+    <string name="widget_section_barometer">БАРОМЕТР</string>
+    <string name="widget_section_gps">GPS</string>
+    <string name="widget_label_altitude">Высота</string>
+    <string name="widget_label_pressure">Давление</string>
+    <string name="widget_label_speed">Скорость</string>
+    <string name="widget_label_lat">Шир</string>
+    <string name="widget_label_lon">Дол</string>
+
+    <!-- Настройка виджета -->
+    <string name="widget_config_title">Настроить виджет</string>
+    <string name="widget_config_subtitle">Выберите, какие разделы показывать на главном экране.</string>
+    <string name="widget_config_show_barometer">Показывать барометр</string>
+    <string name="widget_config_show_gps">Показывать GPS</string>
+    <string name="widget_config_confirm">Добавить на главный экран</string>
+</resources>

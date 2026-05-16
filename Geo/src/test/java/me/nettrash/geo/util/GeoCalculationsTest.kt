@@ -118,4 +118,66 @@ class GeoCalculationsTest {
         // Up should be exactly +100 m (no curvature subtraction).
         assertThat(enu.up).isWithin(0.001).of(100.0)
     }
+
+    // ─── horizonDistance / project / apparentAltitudeAngle ────────
+
+    @Test fun horizonDistanceAtSeaLevelIsZero() {
+        assertThat(GeoCalculations.horizonDistance(0.0)).isEqualTo(0.0)
+    }
+
+    @Test fun horizonDistanceAt2MetresIsRoughly5Km() {
+        // d = sqrt(2 · 6_371_000 · 2 + 4) ≈ 5048 m
+        val d = GeoCalculations.horizonDistance(2.0)
+        assertThat(d).isWithin(5.0).of(5048.0)
+    }
+
+    @Test fun horizonDistanceAt8848mIsCappedAndPositive() {
+        // From Everest's summit the geometric horizon is ~336 km.
+        val d = GeoCalculations.horizonDistance(8848.0)
+        assertThat(d).isGreaterThan(330_000.0)
+        assertThat(d).isLessThan(340_000.0)
+    }
+
+    @Test fun projectMovesEastAtTheEquator() {
+        // 1 km east of (0,0) along a great circle should land very
+        // close to (0, ~0.00898) — i.e. 1/111.32 degrees lon.
+        val p = GeoCalculations.project(
+            originLat = 0.0, originLon = 0.0,
+            bearingDeg = 90.0, distance = 1000.0
+        )
+        assertThat(p.latitude).isWithin(0.0001).of(0.0)
+        assertThat(p.longitude).isWithin(0.0001).of(0.00898)
+    }
+
+    @Test fun projectMovesNorthFromGreenwich() {
+        // 1 km due north — latitude rises by ~0.00898°.
+        val p = GeoCalculations.project(
+            originLat = 51.5, originLon = -0.1,
+            bearingDeg = 0.0, distance = 1000.0
+        )
+        assertThat(p.latitude).isWithin(0.0001).of(51.509)
+        assertThat(p.longitude).isWithin(0.0001).of(-0.1)
+    }
+
+    @Test fun apparentAltitudeAngleNegativeForDistantSeaLevel() {
+        // A "peak" at sea level 50 km away from a 100 m observer
+        // sits well below the horizon — apparent angle must be < 0.
+        val a = GeoCalculations.apparentAltitudeAngle(
+            observerAltitude = 100.0,
+            targetAltitude = 0.0,
+            distance = 50_000.0
+        )
+        assertThat(a).isLessThan(0.0)
+    }
+
+    @Test fun apparentAltitudeAnglePositiveForCloseTallPeak() {
+        // A 4000 m peak 2 km away from a sea-level observer is well
+        // above the horizon — angle should be steeply positive.
+        val a = GeoCalculations.apparentAltitudeAngle(
+            observerAltitude = 0.0,
+            targetAltitude = 4000.0,
+            distance = 2_000.0
+        )
+        assertThat(a).isGreaterThan(1.0)  // > ~57°
+    }
 }

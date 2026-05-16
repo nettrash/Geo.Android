@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        Mirrors iOS Geo-Watch-App-Info.plist:
+          • NSMotionUsageDescription → HIGH_SAMPLING_RATE_SENSORS
+            for the barometer.
+        The iOS watch is paired-only; the Wear OS equivalent is the
+        `standalone` meta-data flag below. Setting it to false means
+        users must have the companion phone app installed too.
+    -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <uses-feature android:name="android.hardware.type.watch" />
+    <uses-feature android:name="android.hardware.sensor.barometer" android:required="false" />
+
+    <application
+        android:label="Geo"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault"
+        tools:targetApi="35">
+
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+
+        <activity
+            android:name=".WearMainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Listens for snapshot payloads pushed by the phone (matches
+            iOS WatchConnectivityManager inbound flow). Receives
+            messages on path `/geo/snapshot` and updates a shared
+            in-process store the UI subscribes to.
+        -->
+        <service
+            android:name=".WearableSnapshotListener"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/geo/" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

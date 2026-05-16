@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import me.nettrash.geo.R
 import androidx.compose.ui.unit.dp
@@ -46,10 +47,10 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val trackingMin by viewModel.trackingMin.collectAsState()
     val trackingMax by viewModel.trackingMax.collectAsState()
 
-    val thinAirLine = GraphLine(4500f, "thin air", 0xFFFFFF00)
-    val deathZoneLine = GraphLine(7980f, "death zone", 0xFFFF0000)
-    val seaLevelLine = GraphLine(0f, "sea level", 0xFF0000FF)
-    val normalPressureLine = GraphLine(760f, "normal", 0xFF4CAF50)
+    val thinAirLine = GraphLine(4500f, stringResource(R.string.graph_thin_air), 0xFFFFFF00)
+    val deathZoneLine = GraphLine(7980f, stringResource(R.string.graph_death_zone), 0xFFFF0000)
+    val seaLevelLine = GraphLine(0f, stringResource(R.string.graph_sea_level), 0xFF0000FF)
+    val normalPressureLine = GraphLine(760f, stringResource(R.string.graph_normal), 0xFF4CAF50)
 
     Box(
         modifier = modifier
@@ -70,7 +71,7 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
         Text(
-            "TRACKING",
+            stringResource(R.string.section_tracking),
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White,
@@ -84,18 +85,21 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
 
         GeoGraphPointsView(
-            caption = "TRACKING ALTITUDE",
+            caption = stringResource(R.string.graph_caption_tracking_altitude),
             data = trackingData,
             lines = trackingLines,
             min = trackingMin,
             max = trackingMax,
             colors = listOf(Color.White, Color(0xFFFF9800)),
-            legend = listOf("barometer", "gps"),
+            legend = listOf(
+                stringResource(R.string.graph_legend_barometer),
+                stringResource(R.string.graph_legend_gps)
+            ),
             measurement = "m"
         )
 
         Text(
-            "STATISTICS",
+            stringResource(R.string.section_statistics),
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White,
@@ -103,7 +107,7 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         )
 
         GeoGraphView(
-            caption = "PRESSURE",
+            caption = stringResource(R.string.graph_caption_pressure),
             data = pressureData,
             lines = listOf(normalPressureLine),
             min = pressureMin,
@@ -118,7 +122,7 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
 
         GeoGraphView(
-            caption = "ALTITUDE BAROMETER",
+            caption = stringResource(R.string.graph_caption_altitude_barometer),
             data = barometerAltData,
             lines = barometerLines,
             min = barometerAltMin,
@@ -133,7 +137,7 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
 
         GeoGraphView(
-            caption = "ALTITUDE GPS",
+            caption = stringResource(R.string.graph_caption_altitude_gps),
             data = gpsAltData,
             lines = gpsLines,
             min = gpsAltMin,

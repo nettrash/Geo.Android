@@ -34,6 +34,11 @@ class HistoryRepository @Inject constructor(
         return historyDao.getRecentItems(limit)
     }
 
+    /** Used by the snapshot-buffer backfill to dedup by timestamp. */
+    suspend fun findByRecordDate(recordDate: Long): HistoryItem? {
+        return historyDao.findByRecordDate(recordDate)
+    }
+
     suspend fun buildPressureDataSet(): Triple<List<DataItem>, Float, Float> {
         val items = getItemsSince()
         if (items.isEmpty()) return Triple(emptyList(), 0f, 1000f)

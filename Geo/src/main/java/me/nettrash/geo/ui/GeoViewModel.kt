@@ -2,7 +2,6 @@ package me.nettrash.geo.ui
 
 import android.content.Context
 import android.location.Location
-import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -16,17 +15,19 @@ import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.DataItem
 import me.nettrash.geo.data.model.DataPoint
 import me.nettrash.geo.data.model.MountainData
-import me.nettrash.geo.data.model.MountainInfo
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.data.repository.HistoryRepository
+import me.nettrash.geo.data.snapshot.SharedSnapshotStore
+import me.nettrash.geo.ar.ArOcclusionManager
+import me.nettrash.geo.ar.SkylineCalculator
 import me.nettrash.geo.location.LocationManager
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.sensor.DeviceMotionManager
+import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.MountainLoader
 import me.nettrash.geo.util.PeakFinder
-import me.nettrash.geo.widget.GeoWidget
-import me.nettrash.geo.widget.WidgetDataStore
+import me.nettrash.geo.widget.WidgetUpdater
 import java.util.Date
 import javax.inject.Inject
 
@@ -38,12 +39,16 @@ class GeoViewModel @Inject constructor(
     val motionManager: DeviceMotionManager,
     private val historyRepository: HistoryRepository,
     private val mountainLoader: MountainLoader,
-    private val peakFinder: PeakFinder
+    private val peakFinder: PeakFinder,
+    private val widgetUpdater: WidgetUpdater,
+    /** Exposed publicly so NatureScreen can render its `samples` and
+     *  `isComputing` StateFlows directly — keeps the heavy terrain
+     *  cache scoped to the application, not the ViewModel. */
+    val skylineCalculator: SkylineCalculator,
+    /** Exposed publicly so NatureScreen can feed targets in and
+     *  read back the occluded-ID set. */
+    val occlusionManager: ArOcclusionManager
 ) : ViewModel() {
-
-    // Throttle widget refreshes to at most once per 30 s
-    private var lastWidgetUpdateMs = 0L
-    private val widgetUpdateIntervalMs = 30_000L
 
     // Mountain data
     private val _mountainsData = MutableStateFlow<MountainData?>(null)
@@ -102,6 +107,12 @@ class GeoViewModel @Inject constructor(
         _mountainsData.value = data
         locationManager.mountainsData = data
 
+        // Drain any background samples captured by the widget worker
+        // or Wear bridge while the main app was suspended, BEFORE
+        // wiring sensors / starting location. Mirrors iOS
+        // `GeoAppDelegate.restoreFromSharedStorage()`.
+        restoreFromSharedStorage()
+
         // Set up barometer callbacks
         barometerManager.onDataUpdated = {
             locationManager.onBarometerUpdated(
@@ -126,6 +137,51 @@ class GeoViewModel @Inject constructor(
 
         // Load initial history
         refreshHistory()
+    }
+
+    /**
+     * Mirror of iOS `GeoAppDelegate.restoreFromSharedStorage()`.
+     *
+     *  1. Rehydrate the in-memory barometer from the most recent
+     *     snapshot if the live sensor hasn't produced one yet. This
+     *     keeps the Info / widget readings continuous across app
+     *     restarts when only the worker / widget has captured data.
+     *  2. Drain the rolling buffer of background snapshots into the
+     *     Room history. Insert is keyed off `recordDate` so repeated
+     *     calls are idempotent.
+     *  3. Clear the buffer on success so we don't re-insert next time.
+     */
+    private fun restoreFromSharedStorage() {
+        val buffered = SharedSnapshotStore.readBuffer(appContext)
+        AppLog.app.debug("restoreFromSharedStorage: ${buffered.size} buffered samples")
+
+        if (buffered.isNotEmpty()) {
+            viewModelScope.launch {
+                var inserted = 0
+                for (token in buffered) {
+                    if (token.barPressure <= 0) continue
+                    val existing = historyRepository.findByRecordDate(token.recordDate)
+                    if (existing != null) continue
+                    historyRepository.insert(
+                        HistoryItem(
+                            recordDate        = token.recordDate,
+                            barometerAltitude = token.barAltitude,
+                            barometerPressure = token.barPressure,
+                            gpsLatitude       = token.gpsLatitude,
+                            gpsLongitude      = token.gpsLongitude,
+                            gpsAltitude       = token.gpsAltitude,
+                            gpsVelocity       = token.gpsSpeed
+                        )
+                    )
+                    inserted++
+                }
+                if (inserted > 0) {
+                    AppLog.app.info("Backfilled $inserted buffered samples")
+                    refreshHistory()
+                }
+                SharedSnapshotStore.clearBuffer(appContext)
+            }
+        }
     }
 
     fun refreshHistory() {
@@ -219,23 +275,9 @@ class GeoViewModel @Inject constructor(
     }
 
     private fun updateWidget() {
-        val now = System.currentTimeMillis()
-        if (now - lastWidgetUpdateMs < widgetUpdateIntervalMs) return
-        lastWidgetUpdateMs = now
-
-        val loc = locationManager.location.value
-        WidgetDataStore.write(
-            context     = appContext,
-            pressureKpa = barometerManager.pressure.value,
-            barAltitude = barometerManager.height.value,
-            gpsAltitude = loc?.altitude ?: 0.0,
-            gpsSpeed    = maxOf(loc?.speed?.toDouble() ?: 0.0, 0.0),
-            gpsLat      = loc?.latitude ?: 0.0,
-            gpsLon      = loc?.longitude ?: 0.0
-        )
-        viewModelScope.launch {
-            GeoWidget().updateAll(appContext)
-        }
+        // Throttled push — see WidgetUpdater.pushThrottled for the
+        // 30 s budget rationale (mirrors iOS reloadWidgetIfNeeded).
+        widgetUpdater.pushThrottled()
     }
 
     override fun onCleared() {

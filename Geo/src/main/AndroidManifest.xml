@@ -4,7 +4,15 @@
 
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!--
+        ACCESS_BACKGROUND_LOCATION was previously declared but never
+        actually requested at runtime. iOS only asks for WhenInUse
+        (Location's initialize() requestWhenInUseAuthorization comment
+        explicitly cites Apple guideline 5.1.1(i) data minimisation),
+        and we route background sampling through WorkManager which
+        doesn't need background-location. Keeping it would also
+        trigger Play Store review for a feature we don't use.
+    -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
@@ -52,6 +60,18 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/geo_widget_info" />
         </receiver>
+
+        <!-- Widget configuration screen — opens on first pin AND when
+             the user taps the reconfigure affordance. Mirrors iOS
+             AppIntent toggles for showing GPS / barometer. -->
+        <activity
+            android:name=".widget.WidgetConfigActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Geo">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
 
         <!--
             GeoApplication implements androidx.work.Configuration.Provider so

@@ -1,0 +1,45 @@
+Geo turns your phone into a pocket altimeter, peak finder, and field-guide overlay — all running locally, with no account, no ads, and no tracking.
+
+Open the Map tab and Geo pins your position alongside famous peaks nearby. Open the Nature tab and it queries OpenStreetMap to list every named summit within ~50 km, sorted by distance, with elevation and bearing. Open the AR tab and your camera shows peak names floating over the actual mountains in front of you.
+
+LIVE ALTITUDE
+
+Geo cross-references the device barometer with GPS-derived altitude, side by side. The barometer is more responsive than GPS for short-term elevation changes; GPS is more reliable as a long-term reference. Seeing both together — and the difference between them — is more informative than either alone.
+
+PEAKS
+
+• The Seven Summits (Everest, Aconcagua, Denali, Kilimanjaro, Elbrus, Vinson, Carstensz / Kosciuszko) with photos and elevations.
+• The world's 100 tallest mountains.
+• The Snow Leopards collection (the five 7000+ m peaks of the former USSR).
+• Nearby peaks pulled live from OpenStreetMap (free, no key).
+
+MAP
+
+Standard Google Maps view pinned with your current position alongside each known peak in your area. Tap any pin for elevation and a quick info card.
+
+AR
+
+Where your device supports ARCore, point the camera at the horizon. Geo overlays peak names on the live feed, anchored by GPS, the barometer, and the device IMU. Useful for matching what you can see to what's in your pocket atlas.
+
+HISTORY & WIDGET
+
+The barometer is sampled in the background and stored in a local Room database, so the Stat tab can plot pressure trends over hours and days — useful for spotting incoming weather changes.
+
+A Glance home-screen widget surfaces your current pressure, altitude, position and speed without opening the app.
+
+PRIVACY
+
+Geo doesn't collect personal information, doesn't create accounts, and uses no analytics, advertising, or trackers. The local pressure history never leaves the device. The Map view uses Google's Maps SDK; the peak search sends approximate coordinates + a search radius to OpenStreetMap's free Overpass API. Both calls happen on your behalf to render features you asked for; no data is transmitted to servers operated by us — we have no servers.
+
+The full privacy policy is at https://nettrash.me/play/geo/privacy.html.
+
+PERMISSIONS
+
+• Location (precise) — to show your position and find nearby peaks.
+• Camera — for the AR view; frames are processed on-device by ARCore.
+• High-rate sensors — to read the device's barometer and orientation.
+• Background location — declared but currently unused; reserved for a future widget update.
+
+Geo does not request permission to read your contacts, calendar, photos, microphone, phone state, or installed-app list.
+
+Free, ad-free, tracker-free.

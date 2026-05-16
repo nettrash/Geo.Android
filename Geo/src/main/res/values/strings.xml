@@ -1,5 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+        Localizable string table for Geo Android.
+
+        Key names mirror the iOS Localizable.strings file at
+        Geo/en.lproj/Localizable.strings so translations stay in
+        lockstep across the two codebases. New keys here should be
+        added to the iOS file too (and vice versa).
+    -->
+
     <string name="app_name">Geo</string>
     <string name="widget_description">Shows barometer pressure, altitude, GPS position and speed.</string>
+
+    <!-- Tab bar -->
+    <string name="tab_info">Info</string>
+    <string name="tab_stat">Stat</string>
+    <string name="tab_map">Map</string>
+    <string name="tab_nature">Nature</string>
+
+    <!-- Section headers (small caps in UI, hence spaced characters) -->
+    <string name="section_barometer">B A R O M E T E R</string>
+    <string name="section_satellite">S A T E L L I T E</string>
+    <string name="section_closest_mountain">CLOSEST MOUNTAIN</string>
+    <string name="section_highest_mountain">HIGHEST MOUNTAIN</string>
+    <string name="section_tracking">TRACKING</string>
+    <string name="section_statistics">STATISTICS</string>
+
+    <!-- Generic field labels -->
+    <string name="field_name">Name</string>
+    <string name="field_altitude">Altitude</string>
+    <string name="field_pressure">Pressure</string>
+    <string name="field_coordinates">Coordinates</string>
+    <string name="field_distance">Distance</string>
+    <string name="field_velocity">Velocity</string>
+    <string name="field_geography">Geography</string>
+    <string name="field_mountain">Mountain</string>
+    <string name="field_percent_everest">% Everest</string>
+    <string name="field_height">Height</string>
+    <string name="field_region">Region</string>
+    <string name="field_country">Country</string>
+    <string name="field_location">Location</string>
+    <string name="field_first_ascent">First Ascent</string>
+
+    <!-- Buttons -->
+    <string name="action_directions">Directions</string>
+    <string name="action_show_map">Show Map</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_open_settings">Open Settings</string>
+    <string name="action_cancel">Cancel</string>
+
+    <!-- Fallbacks -->
+    <string name="fallback_loading">Loading…</string>
+    <string name="fallback_unknown">?</string>
+    <string name="fallback_first_ascent_unknown">first ascent is unknown</string>
+
+    <!-- History details -->
+    <string name="history_details_title">History point details</string>
+    <string name="history_barometer">Barometer information</string>
+    <string name="history_satellite">Satellite information</string>
+
+    <!-- Chart reference lines -->
+    <string name="graph_thin_air">thin air</string>
+    <string name="graph_death_zone">death zone</string>
+    <string name="graph_sea_level">sea level</string>
+    <string name="graph_normal">normal</string>
+    <string name="graph_legend_barometer">barometer</string>
+    <string name="graph_legend_gps">gps</string>
+    <string name="graph_caption_tracking_altitude">TRACKING ALTITUDE</string>
+    <string name="graph_caption_pressure">PRESSURE</string>
+    <string name="graph_caption_altitude_barometer">ALTITUDE BAROMETER</string>
+    <string name="graph_caption_altitude_gps">ALTITUDE GPS</string>
+
+    <!-- AR Nature view -->
+    <string name="ar_about_title">About the Nature view</string>
+    <string name="ar_about_undetermined">The Nature view shows nearby mountain peaks overlaid on the camera. Continue to choose whether to grant camera access.</string>
+    <string name="ar_about_denied">The Nature view shows nearby mountain peaks overlaid on the camera. Camera access is currently turned off for Geo. You can re-enable it in Android Settings and return to this tab.</string>
+    <string name="ar_unavailable_title">ARCore Not Available</string>
+    <string name="ar_unavailable_detail">This device does not support ARCore.</string>
+    <string name="ar_status_scanning">Scanning</string>
+    <string name="ar_status_skyline">Skyline</string>
+    <string name="ar_status_depth">Depth</string>
+    <string name="ar_distance_source_depth">Depth</string>
+    <string name="ar_distance_source_plane">Plane</string>
+    <string name="ar_distance_source_raycast">Raycast</string>
+    <string name="ar_distance_unknown">--</string>
+
+    <!-- Permission banner (location / motion) -->
+    <string name="permissions_banner_headline_both">Location &amp; motion access required</string>
+    <string name="permissions_banner_headline_location">Location access required</string>
+    <string name="permissions_banner_headline_motion">Motion access required</string>
+    <string name="permissions_banner_detail_both">Tap to enable Location and Motion in Settings.</string>
+    <string name="permissions_banner_detail_location">Tap to enable Location in Settings — needed for nearby peaks and the map.</string>
+    <string name="permissions_banner_detail_motion">Tap to enable Motion in Settings — needed for barometer altitude.</string>
+    <string name="permissions_banner_open_settings">Open Settings</string>
+
+    <!-- Widget -->
+    <string name="widget_title">GEO</string>
+    <string name="widget_section_barometer">BAROMETER</string>
+    <string name="widget_section_gps">GPS</string>
+    <string name="widget_label_altitude">Altitude</string>
+    <string name="widget_label_pressure">Pressure</string>
+    <string name="widget_label_speed">Speed</string>
+    <string name="widget_label_lat">Lat</string>
+    <string name="widget_label_lon">Lon</string>
+
+    <!-- Widget configuration screen -->
+    <string name="widget_config_title">Configure widget</string>
+    <string name="widget_config_subtitle">Choose which sections to show on the home screen.</string>
+    <string name="widget_config_show_barometer">Show barometer</string>
+    <string name="widget_config_show_gps">Show GPS</string>
+    <string name="widget_config_confirm">Add to home screen</string>
 </resources>

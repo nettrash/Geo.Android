@@ -25,3 +25,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Geo"
 include(":Geo")
+include(":wear")

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        British English overrides. Most strings inherit from the
+        default values/ resource set; only entries that diverge in
+        spelling or vocabulary are listed here. Mirrors the same
+        approach the Play release-notes uses for en-GB.
+    -->
+
+    <!-- "centred" rather than "centered", "favourable" rather than
+         "favorable", etc — none of our current copy actually triggers
+         a spelling difference, so this file is intentionally empty
+         except for these overrides we may add later. The file's
+         presence keeps the en-GB locale fully covered (Android falls
+         back to values/ for anything not present here). -->
+
+</resources>

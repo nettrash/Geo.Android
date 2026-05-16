@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -160,22 +161,25 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 containerColor = Color(0xFF1A1A1A)
             ) {
                 val mountain = selectedMountain!!
+                val unknownText = stringResource(R.string.fallback_unknown)
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        mountain.name ?: "Unknown",
+                        mountain.name ?: unknownText,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
                     Spacer(Modifier.height(8.dp))
-                    DetailRow("Height", "${mountain.height ?: 0} m")
-                    DetailRow("Region", mountain.partOfTheWorld ?: "-")
-                    DetailRow("Country", mountain.country ?: "-")
-                    DetailRow("Location", mountain.location ?: "-")
-                    DetailRow("Coordinates",
+                    DetailRow(stringResource(R.string.field_height), "${mountain.height ?: 0} m")
+                    DetailRow(stringResource(R.string.field_region), mountain.partOfTheWorld ?: "-")
+                    DetailRow(stringResource(R.string.field_country), mountain.country ?: "-")
+                    DetailRow(stringResource(R.string.field_location), mountain.location ?: "-")
+                    DetailRow(
+                        stringResource(R.string.field_coordinates),
                         "${String.format(Locale.US, "%.6f", mountain.coordinates?.latitude ?: 0.0)}, " +
-                        "${String.format(Locale.US, "%.6f", mountain.coordinates?.longitude ?: 0.0)}")
-                    DetailRow("First Ascent", mountain.firstAscent ?: "-")
+                        "${String.format(Locale.US, "%.6f", mountain.coordinates?.longitude ?: 0.0)}"
+                    )
+                    DetailRow(stringResource(R.string.field_first_ascent), mountain.firstAscent ?: "-")
 
                     Spacer(Modifier.height(12.dp))
                     Button(
@@ -188,7 +192,7 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Show on Map", color = Color.White)
+                        Text(stringResource(R.string.action_show_map), color = Color.White)
                     }
                     Spacer(Modifier.height(24.dp))
                 }
@@ -208,15 +212,18 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                         val dateStr = SimpleDateFormat("MMM d, yyyy HH:mm:ss", Locale.getDefault()).format(Date(item.recordDate))
                         Text(dateStr, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         Spacer(Modifier.height(8.dp))
-                        DetailRow("Pressure", "${String.format(Locale.US, "%.4f", item.barometerPressure)} kPa")
-                        DetailRow("Pressure", "${String.format(Locale.US, "%.4f", item.barometerPressure * 7.50062)} mm Hg")
-                        DetailRow("Pressure", "${String.format(Locale.US, "%.4f", item.barometerPressure / 101.325)} atm")
-                        DetailRow("Bar. Altitude", "${String.format(Locale.US, "%.0f", item.barometerAltitude)} m")
-                        DetailRow("GPS Latitude", "${String.format(Locale.US, "%.6f", item.gpsLatitude)}")
-                        DetailRow("GPS Longitude", "${String.format(Locale.US, "%.6f", item.gpsLongitude)}")
-                        DetailRow("GPS Altitude", "${String.format(Locale.US, "%.0f", item.gpsAltitude)} m")
-                        DetailRow("Velocity", "${String.format(Locale.US, "%.1f", item.gpsVelocity)} m/s")
-                        DetailRow("Velocity", "${String.format(Locale.US, "%.1f", item.gpsVelocity * 3.6)} km/h")
+                        val pressureLabel = stringResource(R.string.field_pressure)
+                        val altitudeLabel = stringResource(R.string.field_altitude)
+                        val velocityLabel = stringResource(R.string.field_velocity)
+                        DetailRow(pressureLabel, "${String.format(Locale.US, "%.4f", item.barometerPressure)} kPa")
+                        DetailRow(pressureLabel, "${String.format(Locale.US, "%.4f", item.barometerPressure * 7.50062)} mm Hg")
+                        DetailRow(pressureLabel, "${String.format(Locale.US, "%.4f", item.barometerPressure / 101.325)} atm")
+                        DetailRow("$altitudeLabel (bar)", "${String.format(Locale.US, "%.0f", item.barometerAltitude)} m")
+                        DetailRow("GPS lat", "${String.format(Locale.US, "%.6f", item.gpsLatitude)}")
+                        DetailRow("GPS lon", "${String.format(Locale.US, "%.6f", item.gpsLongitude)}")
+                        DetailRow("$altitudeLabel (GPS)", "${String.format(Locale.US, "%.0f", item.gpsAltitude)} m")
+                        DetailRow(velocityLabel, "${String.format(Locale.US, "%.1f", item.gpsVelocity)} m/s")
+                        DetailRow(velocityLabel, "${String.format(Locale.US, "%.1f", item.gpsVelocity * 3.6)} km/h")
                         Spacer(Modifier.height(24.dp))
                     }
                 }
