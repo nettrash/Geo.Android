@@ -23,3 +23,5 @@ keystore.properties
 play-service-account.json
 
 .claude/
+
+build/

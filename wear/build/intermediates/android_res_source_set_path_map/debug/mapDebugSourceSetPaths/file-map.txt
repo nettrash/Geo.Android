@@ -1,8 +1,0 @@
-me.nettrash.geo.wear-pngs-0 /Users/nettrash/Develop/nettrash.me/Geo.Android/wear/build/generated/res/pngs/debug
-me.nettrash.geo.wear-updated_navigation_xml-1 /Users/nettrash/Develop/nettrash.me/Geo.Android/wear/build/generated/updated_navigation_xml/debug
-me.nettrash.geo.wear-packageDebugResources-2 /Users/nettrash/Develop/nettrash.me/Geo.Android/wear/build/intermediates/incremental/debug/packageDebugResources/merged.dir
-me.nettrash.geo.wear-packageDebugResources-3 /Users/nettrash/Develop/nettrash.me/Geo.Android/wear/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
-me.nettrash.geo.wear-debug-4 /Users/nettrash/Develop/nettrash.me/Geo.Android/wear/build/intermediates/merged_res/debug/mergeDebugResources
-me.nettrash.geo.wear-debug-5 /Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/debug/res
-me.nettrash.geo.wear-main-6 /Users/nettrash/Develop/nettrash.me/Geo.Android/wear/src/main/res
-gradleHome-0 /Users/nettrash/.gradle
