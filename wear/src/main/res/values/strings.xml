@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Geo</string>
+
+    <!-- Wear Tile (shown in the tile picker on the watch) -->
+    <string name="tile_label">Geo Altitude</string>
+    <string name="tile_description">Current altitude, pressure, and a 0–8 848 m gauge.</string>
+</resources>

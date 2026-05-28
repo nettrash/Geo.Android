@@ -98,14 +98,18 @@ fun HorizonOverlay(
         val upper = headingDeg + headingHalfWindowDeg
         while (bearing <= upper) {
             val (distance, altitude) = resolveBearing(bearing, skyline, geometricHorizon)
-            // Cap distance at the geometric horizon to keep
-            // projections sane for extreme samples.
-            val effectiveDistance = kotlin.math.min(distance, geometricHorizon)
-
+            // **No** clamp to the geometric horizon. Distant tall
+            // peaks (Everest from 200 km, etc.) are visible past
+            // the sea-level horizon precisely because their
+            // elevation lifts them above eye level — clamping
+            // would project them at the wrong distance and the
+            // line would draw at the horizon instead of along the
+            // real silhouette. Off-screen culling is handled by
+            // the projection bounds check below, not by distance.
             val theta = Math.toRadians(bearing)
-            val east = effectiveDistance * kotlin.math.sin(theta)
-            val north = effectiveDistance * kotlin.math.cos(theta)
-            val curvatureDrop = (effectiveDistance * effectiveDistance) / (2.0 * GeoCalculations.EARTH_RADIUS)
+            val east = distance * kotlin.math.sin(theta)
+            val north = distance * kotlin.math.cos(theta)
+            val curvatureDrop = (distance * distance) / (2.0 * GeoCalculations.EARTH_RADIUS)
             val up = (altitude - observerAlt) - curvatureDrop
 
             val world = floatArrayOf(

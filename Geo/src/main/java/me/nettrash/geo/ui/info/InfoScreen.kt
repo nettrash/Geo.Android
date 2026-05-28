@@ -43,6 +43,7 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val pressure by viewModel.barometerManager.pressure.collectAsState()
     val height by viewModel.barometerManager.height.collectAsState()
     val everest by viewModel.barometerManager.everest.collectAsState()
+    val hasAbsoluteFix by viewModel.barometerManager.hasAbsoluteFix.collectAsState()
     val location by viewModel.locationManager.location.collectAsState()
     val closestMountain by viewModel.locationManager.closestMountain.collectAsState()
     val closestDistance by viewModel.locationManager.closestMountainDistance.collectAsState()
@@ -78,7 +79,22 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 }
             }
             InfoRow(stringResource(R.string.field_altitude)) {
-                MonoText("${String.format(Locale.US, "%.0f", height)} m")
+                Column(horizontalAlignment = Alignment.End) {
+                    MonoText("${String.format(Locale.US, "%.0f", height)} m")
+                    // "calibrating…" hint while QnhRepository hasn't
+                    // fetched a real sea-level pressure for our
+                    // location yet. The altitude shown is still the
+                    // standard-atmosphere fallback, which can be
+                    // off by 100–500 m in real weather, so flag it.
+                    if (!hasAbsoluteFix) {
+                        Text(
+                            text = stringResource(R.string.field_calibrating),
+                            color = Color(0xFFFFC107),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
             }
             InfoRow(stringResource(R.string.field_percent_everest)) {
                 MonoText("${String.format(Locale.US, "%.4f", everest * 100.0)} %")

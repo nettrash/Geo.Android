@@ -41,7 +41,7 @@ object WidgetDataStore {
                 recordDate = System.currentTimeMillis(),
                 gpsAltitude = gpsAltitude,
                 gpsSpeed = gpsSpeed,
-                barPressure = pressureKpa,
+                barPreassure = pressureKpa,
                 barAltitude = barAltitude,
                 gpsLatitude = gpsLat,
                 gpsLongitude = gpsLon
@@ -53,7 +53,7 @@ object WidgetDataStore {
         val token = SharedSnapshotStore.readCurrent(context)
             ?: return Snapshot()
         return Snapshot(
-            pressureKpa = token.barPressure,
+            pressureKpa = token.barPreassure,
             barAltitude = token.barAltitude,
             gpsAltitude = token.gpsAltitude,
             gpsSpeed    = token.gpsSpeed,

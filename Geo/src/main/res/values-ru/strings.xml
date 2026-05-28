@@ -33,6 +33,7 @@
     <string name="field_geography">География</string>
     <string name="field_mountain">Вершина</string>
     <string name="field_percent_everest">% Эвереста</string>
+    <string name="field_calibrating">калибровка…</string>
     <string name="field_height">Высота</string>
     <string name="field_region">Регион</string>
     <string name="field_country">Страна</string>

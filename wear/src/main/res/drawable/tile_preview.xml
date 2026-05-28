@@ -1,0 +1,46 @@
+<!--
+    Preview image shown in the watch's tile picker when the user is
+    deciding whether to add the Geo tile. Vector so it scales well
+    across watch resolutions without bundling a PNG.
+
+    Triangle/mountain silhouette with the "GEO" text underneath —
+    just enough to communicate "altitude tile" at picker thumbnail
+    size.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+
+    <!-- Tile background -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M0,0 L120,0 L120,120 L0,120 Z" />
+
+    <!-- Mountain silhouette -->
+    <path
+        android:fillColor="#FFFF9800"
+        android:pathData="M20,86 L48,46 L66,68 L82,52 L100,86 Z" />
+
+    <!-- Snow caps -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M44,52 L48,46 L52,52 L48,56 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M78,58 L82,52 L86,58 L82,62 Z" />
+
+    <!-- "GEO" label -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="0.5"
+        android:pathData="M48,104 L48,98 L52,98 L52,100 L50,100 L50,102 L52,102 L52,104 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M55,104 L55,98 L60,98 L60,100 L57,100 L57,100.5 L59,100.5 L59,101.5 L57,101.5 L57,102 L60,102 L60,104 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M63,98 L67,98 L68,99 L68,103 L67,104 L63,104 L62,103 L62,99 Z M64,100 L64,102 L66,102 L66,100 Z" />
+</vector>

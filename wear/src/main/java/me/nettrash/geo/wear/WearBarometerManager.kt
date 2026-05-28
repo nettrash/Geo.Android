@@ -11,14 +11,27 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.ln
 
 /**
- * Wear OS barometer driver — direct port of iOS
- * `Geo Watch App/GeoWatchAppDelegate.swift` barometer logic.
+ * Wear OS barometer driver.
  *
- * Maintains a rolling 20-sample altitude history matching the iOS
- * ContentView graph. Per-sample updates fire at the platform's
- * `SENSOR_DELAY_NORMAL` rate (~5 Hz on most watches); the iOS app
- * runs CMAltimeter at ~1 Hz, so the watch graph here is updated
- * slightly faster but capped to the same 20-sample buffer.
+ * Watch altitude is calibrated against the *paired phone's* most
+ * recent calibrated reading rather than against standard atmosphere
+ * (mirrors the iOS Watch's reliance on the phone for absolute
+ * pressure context — the iPhone has internet, the Watch generally
+ * doesn't):
+ *
+ *   altitude_watch = phoneRefAlt
+ *                  + ln(phoneRefPressure / currentWatchPressure)
+ *                    / 0.00012
+ *
+ * The phone publishes its `(barPreassure, barAltitude)` over the
+ * Wearable Data Layer via [WearSnapshotStore.token]; we treat the
+ * last token we received as a reference point and shift from there
+ * using the standard barometric formula. The 0.00012 constant is
+ * fine for the *delta* — it only goes wrong as an absolute base.
+ *
+ * Until the first phone snapshot arrives we fall back to standard
+ * atmosphere (101.325 kPa as the reference) and flag the readings
+ * as uncalibrated via [hasAbsoluteFix].
  */
 class WearBarometerManager(context: Context) : SensorEventListener {
 
@@ -36,6 +49,11 @@ class WearBarometerManager(context: Context) : SensorEventListener {
 
     private val _history = MutableStateFlow<List<Double>>(emptyList())
     val history: StateFlow<List<Double>> = _history.asStateFlow()
+
+    /** True once we've ever received a phone snapshot, so the
+     *  calibrated formula above can run. */
+    private val _hasAbsoluteFix = MutableStateFlow(false)
+    val hasAbsoluteFix: StateFlow<Boolean> = _hasAbsoluteFix.asStateFlow()
 
     /** Time of last graph-history update; throttled to 30 s per iOS. */
     private var lastHistoryUpdateMs: Long = 0L
@@ -57,8 +75,20 @@ class WearBarometerManager(context: Context) : SensorEventListener {
         val pressureKpa = (event.values[0] / 10.0)  // hPa → kPa
         _pressure.value = pressureKpa
 
-        // h = ln(P0/Ph) / 0.00012, where P0 = 101.325 kPa.
-        val altitude = ln(101.325 / pressureKpa) / 0.00012
+        val token = WearSnapshotStore.token.value
+        // `barPreassure` is intentionally misspelled — that's the
+        // on-wire field name on iOS, so we carry it through here so
+        // the same JSON payload round-trips between platforms.
+        val altitude: Double = if (token != null && token.barPreassure > 0) {
+            // Calibrated against phone reference.
+            _hasAbsoluteFix.value = true
+            token.barAltitude +
+                ln(token.barPreassure / pressureKpa) / 0.00012
+        } else {
+            // Standard atmosphere fallback.
+            ln(101.325 / pressureKpa) / 0.00012
+        }
+
         _altitude.value = altitude
         _everest.value = altitude / 8848.0
 

@@ -58,7 +58,7 @@ class SharedSnapshotStoreTest {
         assertThat(buffer).hasSize(SharedSnapshotStore.BUFFER_CAPACITY)
         // Oldest entries dropped first → first entry should match
         // index 5 (we wrote +5 over the capacity).
-        assertThat(buffer.first().barPressure).isEqualTo(95.0)
+        assertThat(buffer.first().barPreassure).isEqualTo(95.0)
     }
 
     @Test
@@ -95,7 +95,7 @@ class SharedSnapshotStoreTest {
             .edit()
             .putString(
                 "current",
-                """{"recordDate":42,"gpsAltitude":1.0,"gpsSpeed":2.0,"barPressure":90.0,"barAltitude":500.0}"""
+                """{"recordDate":42,"gpsAltitude":1.0,"gpsSpeed":2.0,"barPreassure":90.0,"barAltitude":500.0}"""
             )
             .apply()
 
@@ -104,7 +104,7 @@ class SharedSnapshotStoreTest {
         assertThat(read).isNotNull()
         assertThat(read!!.gpsLatitude).isEqualTo(0.0)
         assertThat(read.gpsLongitude).isEqualTo(0.0)
-        assertThat(read.barPressure).isEqualTo(90.0)
+        assertThat(read.barPreassure).isEqualTo(90.0)
     }
 
     private fun sample(
@@ -114,7 +114,7 @@ class SharedSnapshotStoreTest {
         recordDate = recordDate,
         gpsAltitude = 100.0,
         gpsSpeed = 0.0,
-        barPressure = pressureKpa,
+        barPreassure = pressureKpa,
         barAltitude = 200.0,
         gpsLatitude = 1.23,
         gpsLongitude = 4.56

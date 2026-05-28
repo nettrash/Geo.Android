@@ -8,7 +8,11 @@ import android.provider.Settings
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateIntOffsetAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +40,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,11 +48,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -271,6 +278,7 @@ private fun ArScene(
     val barometerHeight by viewModel.barometerManager.height.collectAsState()
     val occludedIds by viewModel.occlusionManager.occludedIds.collectAsState()
     val isDepthSupported by controller.isDepthSupported.collectAsState()
+    var showDiagnostics by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { /* viewport handled via AndroidView */ }) {
         AndroidView(
@@ -287,13 +295,33 @@ private fun ArScene(
                     sessionConfiguration = { session, config ->
                         config.planeFindingMode =
                             Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-                        val supportsDepth = session.isDepthModeSupported(
-                            Config.DepthMode.AUTOMATIC
-                        )
-                        if (supportsDepth) {
-                            config.depthMode = Config.DepthMode.AUTOMATIC
+                        // Depth mode is OPT-IN because some devices
+                        // (e.g. the test device we hit on 2026-05-16,
+                        // and reportedly the Pixel 4a 5G / certain
+                        // Samsung models) report
+                        // `isDepthModeSupported(AUTOMATIC) == true`
+                        // but then crash `Session.update` with a
+                        // `FatalException` once depth-enabled frames
+                        // start flowing — see the native error
+                        //   spherical_rectifier.cc:159 ...
+                        //   Only kUnrectifiedOriginal is supported
+                        //   for ComputeDisparity.
+                        // The crash happens inside sceneview-android's
+                        // frame callback before any of our code runs,
+                        // so it isn't catchable. Until ARCore /
+                        // sceneview-android grow a recovery hook,
+                        // plane occlusion alone is the safe default.
+                        if (ENABLE_DEPTH_MODE) {
+                            val claimsDepth = session.isDepthModeSupported(
+                                Config.DepthMode.AUTOMATIC
+                            )
+                            if (claimsDepth) {
+                                config.depthMode = Config.DepthMode.AUTOMATIC
+                            }
+                            controller.setDepthConfigEnabled(claimsDepth)
+                        } else {
+                            controller.setDepthConfigEnabled(false)
                         }
-                        controller.setDepthSupported(supportsDepth)
                     }
                     // Per-frame callback — push ARCore camera matrices,
                     // planes, and depth into the controller so the
@@ -362,22 +390,37 @@ private fun ArScene(
             }
         }
 
-        // Top info bar.
+        // Top info bar. Long-press anywhere on it to reveal the AR
+        // diagnostics overlay — hidden by default so the bar stays
+        // uncluttered for normal users.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.5f))
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onLongPress = { showDiagnostics = true }
+                    )
+                }
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Counters reflect what's *actually drawn* in
+            // ProjectedOverlay, i.e. peaks/history minus anything
+            // ArOcclusionManager says is behind real geometry.
+            // Showing the raw collection sizes here would lie about
+            // what the user can see on screen.
+            val visiblePeaks = peaks.count { it.id !in occludedIds }
+            val visibleHistory = historyPoints.count { it.id !in occludedIds }
+
             Icon(Icons.Default.Terrain, null, tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
-            Text("${peaks.size}", color = Color.White, fontSize = 14.sp)
+            Text("$visiblePeaks", color = Color.White, fontSize = 14.sp)
             Spacer(Modifier.width(12.dp))
 
             Icon(Icons.Default.LocationOn, null, tint = Color.Cyan, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
-            Text("${historyPoints.size}", color = Color.White, fontSize = 14.sp)
+            Text("$visibleHistory", color = Color.White, fontSize = 14.sp)
 
             if (!isTracking) {
                 Spacer(Modifier.width(12.dp))
@@ -441,6 +484,21 @@ private fun ArScene(
                 fontFamily = FontFamily.Monospace
             )
         }
+
+        // Diagnostic overlay — only when explicitly revealed via a
+        // long-press on the top bar. Sits on top of everything else
+        // in the outer Box.
+        if (showDiagnostics) {
+            ArDiagnosticsOverlay(
+                controller = controller,
+                occlusion = viewModel.occlusionManager,
+                skyline = viewModel.skylineCalculator,
+                peakCount = peaks.size,
+                historyCount = historyPoints.size,
+                locationAccuracy = location?.accuracy,
+                onDismiss = { showDiagnostics = false }
+            )
+        }
     }
 }
 
@@ -456,52 +514,81 @@ private fun ProjectedOverlay(
     historyPoints: List<ARHistoryPoint>
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        // History points first so peaks render on top.
+        // History points first so peaks render on top. `key(id)`
+        // makes each marker's animation state survive list
+        // reorderings (the merge step in PeakFinder can shuffle
+        // order without changing identities).
+        //
+        // We DON'T use `return@key` to skip off-screen markers
+        // because `key` is `@Composable inline fun` and a non-local
+        // return out of its body through the outer (non-inline)
+        // `forEach` lambda generates a `$$$$$NON_LOCAL_RETURN$$$$$`
+        // helper class that R8 can't represent in dex format.
+        // A plain `if (off != null)` does the same thing and dexes.
         historyPoints.forEach { point ->
-            val off = ArProjection.projectGps(
-                controller = controller,
-                userLocation = userLocation,
-                targetLat = point.latitude,
-                targetLon = point.longitude,
-                targetAlt = point.gpsAltitude
-            ) ?: return@forEach
-
-            val opacity = (1.0 - (point.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat() * 0.85f
-            // Use Modifier.offset (not padding) — projection can yield
-            // negative offsets when the marker sits just outside the
-            // viewport but within the 50 px margin that `projectGps`
-            // accepts. `padding()` would throw IllegalArgumentException
-            // on negative values; `offset()` accepts any sign.
-            Box(
-                modifier = Modifier.absoluteOffset(
-                    x = off.x.toInt().dp,
-                    y = off.y.toInt().dp
+            key(point.id) {
+                val off = ArProjection.projectGps(
+                    controller = controller,
+                    userLocation = userLocation,
+                    targetLat = point.latitude,
+                    targetLon = point.longitude,
+                    targetAlt = point.gpsAltitude
                 )
-            ) {
-                HistoryMarker(point = point, opacity = opacity)
+                if (off != null) {
+                    val opacity = (1.0 - (point.distance / 50_000.0) * 0.5)
+                        .coerceIn(0.5, 1.0).toFloat() * 0.85f
+                    AnimatedMarker(target = off) {
+                        HistoryMarker(point = point, opacity = opacity)
+                    }
+                }
             }
         }
 
         peaks.forEach { peak ->
-            val off = ArProjection.projectGps(
-                controller = controller,
-                userLocation = userLocation,
-                targetLat = peak.latitude,
-                targetLon = peak.longitude,
-                targetAlt = peak.altitude
-            ) ?: return@forEach
-
-            val opacity = (1.0 - (peak.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
-            val scale = (1.0 - (peak.distance / 50_000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
-            Box(
-                modifier = Modifier.absoluteOffset(
-                    x = off.x.toInt().dp,
-                    y = off.y.toInt().dp
+            key(peak.id) {
+                val off = ArProjection.projectGps(
+                    controller = controller,
+                    userLocation = userLocation,
+                    targetLat = peak.latitude,
+                    targetLon = peak.longitude,
+                    targetAlt = peak.altitude
                 )
-            ) {
-                PeakMarker(peak = peak, opacity = opacity, scale = scale)
+                if (off != null) {
+                    val opacity = (1.0 - (peak.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
+                    val scale = (1.0 - (peak.distance / 50_000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
+                    AnimatedMarker(target = off) {
+                        PeakMarker(peak = peak, opacity = opacity, scale = scale)
+                    }
+                }
             }
         }
+    }
+}
+
+/**
+ * Position [content] at [target] with a short linear glide between
+ * updates so markers don't snap when a fresh AR projection arrives.
+ * Mirrors iOS's `.animation(.linear(duration: 1/30), value: screenPos)`
+ * — 33 ms is fast enough to feel real-time but smooths the
+ * ~half-pixel jitter from each frame's projection refresh.
+ *
+ * `Modifier.absoluteOffset` (taking an `IntOffset` lambda) accepts
+ * negative values, which matters because the projection can yield
+ * positions in the [-50, viewportSize + 50] margin so markers don't
+ * pop out abruptly at the edges.
+ */
+@Composable
+private fun AnimatedMarker(
+    target: androidx.compose.ui.geometry.Offset,
+    content: @Composable () -> Unit
+) {
+    val animated by animateIntOffsetAsState(
+        targetValue = IntOffset(target.x.toInt(), target.y.toInt()),
+        animationSpec = tween(durationMillis = 33, easing = LinearEasing),
+        label = "marker_offset"
+    )
+    Box(modifier = Modifier.absoluteOffset { animated }) {
+        content()
     }
 }
 
@@ -510,6 +597,13 @@ private fun ProjectedOverlay(
  * up. Inferior to ProjectedOverlay (no altitude awareness, no
  * camera matrices) but still gives the user *something* to look at
  * in the first second after granting the camera permission.
+ *
+ * Uses `Modifier.absoluteOffset` rather than `Modifier.padding` to
+ * place markers. The bearing-window formulas clamp to [0.1, 0.9] so
+ * the values never go negative *today*, but `padding(...)` throws
+ * `IllegalArgumentException: Padding must be non-negative` on the
+ * slightest regression in those formulas. `absoluteOffset` accepts
+ * any sign and matches the convention now used in ProjectedOverlay.
  */
 @Composable
 private fun BearingWindowOverlay(
@@ -526,7 +620,7 @@ private fun BearingWindowOverlay(
             val ny = (0.5f - ((peak.altitude - userAltitude) / 5000.0).toFloat()).coerceIn(0.1f, 0.9f)
             val opacity = (1.0 - (peak.distance / 50000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
             val scale = (1.0 - (peak.distance / 50000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
-            Box(modifier = Modifier.padding(start = (nx * 300).dp, top = (ny * 500).dp)) {
+            Box(modifier = Modifier.absoluteOffset(x = (nx * 300).dp, y = (ny * 500).dp)) {
                 PeakMarker(peak = peak, opacity = opacity, scale = scale)
             }
         }
@@ -536,7 +630,7 @@ private fun BearingWindowOverlay(
             val nx = if (rel <= 180) 0.5f + (rel / 120f) else 0.5f - ((360f - rel) / 120f)
             val ny = (0.5f - ((point.gpsAltitude - userAltitude) / 1000.0).toFloat()).coerceIn(0.1f, 0.9f)
             val opacity = (1.0 - (point.distance / 50000.0) * 0.5).coerceIn(0.5, 1.0).toFloat() * 0.85f
-            Box(modifier = Modifier.padding(start = (nx * 300).dp, top = (ny * 500).dp)) {
+            Box(modifier = Modifier.absoluteOffset(x = (nx * 300).dp, y = (ny * 500).dp)) {
                 HistoryMarker(point = point, opacity = opacity)
             }
         }
@@ -690,6 +784,14 @@ private fun ArUnavailableScreen() {
 }
 
 private const val KEY_CAMERA_REQUESTED = "camera_requested"
+
+/**
+ * Feature flag for ARCore Depth API. Off by default — see the
+ * long-form rationale in the `sessionConfiguration` block above.
+ * Flip to `true` after verifying on a sufficiently large device set
+ * that the depth-enabled session doesn't crash.
+ */
+private const val ENABLE_DEPTH_MODE = false
 
 /**
  * Pretty-print a wall distance in centimetres / metres according to

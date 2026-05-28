@@ -29,6 +29,9 @@ wearCompose = "1.5.4"
 wearComposeFoundation = "1.5.4"
 wearPlayServicesWearable = "19.0.0"
 horologistVersion = "0.7.15-alpha"
+wearTiles = "1.5.0"
+wearProtoLayout = "1.4.0"
+guavaListenableFuture = "33.5.0-jre"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -90,6 +93,20 @@ truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }
 androidx-wear-compose-material = { group = "androidx.wear.compose", name = "compose-material", version.ref = "wearCompose" }
 androidx-wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearComposeFoundation" }
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "wearPlayServicesWearable" }
+
+# Wear Tiles + ProtoLayout (Wear OS glanceable tiles ≈ iOS complications)
+androidx-wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version.ref = "wearTiles" }
+androidx-wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout", version.ref = "wearProtoLayout" }
+androidx-wear-protolayout-material = { group = "androidx.wear.protolayout", name = "protolayout-material", version.ref = "wearProtoLayout" }
+androidx-wear-protolayout-expression = { group = "androidx.wear.protolayout", name = "protolayout-expression", version.ref = "wearProtoLayout" }
+guava-listenablefuture = { group = "com.google.guava", name = "guava", version.ref = "guavaListenableFuture" }
+# Coroutines ↔ Guava ListenableFuture interop — TileService returns
+# a ListenableFuture, and `kotlinx.coroutines.guava.future {}` lets
+# us back it with a suspend block. Pinned to 1.9.0 because the
+# kotlinx-coroutines-bom transitively pulled in by
+# androidx.lifecycle-runtime-ktx:2.10.0 forces that version, and
+# Gradle will reject a mismatched explicit declaration.
+kotlinx-coroutines-guava = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-guava", version = "1.9.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

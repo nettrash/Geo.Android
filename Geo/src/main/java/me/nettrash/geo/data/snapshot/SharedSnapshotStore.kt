@@ -122,7 +122,7 @@ object SharedSnapshotStore {
         // when the barometer reports the same value many times in a
         // row.
         existing.lastOrNull()?.let { last ->
-            if (abs(last.barPressure - token.barPressure) < DEDUP_PRESSURE_DELTA_KPA &&
+            if (abs(last.barPreassure - token.barPreassure) < DEDUP_PRESSURE_DELTA_KPA &&
                 abs(last.recordDate - token.recordDate) < DEDUP_TIME_DELTA_MS
             ) {
                 return

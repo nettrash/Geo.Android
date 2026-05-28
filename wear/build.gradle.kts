@@ -68,6 +68,17 @@ dependencies {
     // Wearable Data Layer — paired-phone communication.
     implementation(libs.play.services.wearable)
 
+    // Wear Tiles — glanceable tile cards, the Wear-OS analog of
+    // iOS complication families.
+    implementation(libs.androidx.wear.tiles)
+    implementation(libs.androidx.wear.protolayout)
+    implementation(libs.androidx.wear.protolayout.material)
+    implementation(libs.androidx.wear.protolayout.expression)
+    // TileService returns ListenableFuture; guava provides it +
+    // kotlinx-coroutines-guava gives us the `future { … }` builder.
+    implementation(libs.guava.listenablefuture)
+    implementation(libs.kotlinx.coroutines.guava)
+
     // Shared snapshot model + serialization with the phone module.
     implementation(libs.kotlinx.serialization.json)
 }

@@ -73,6 +73,21 @@
             </intent-filter>
         </activity>
 
+        <!-- Listens for `/geo/snapshot` messages pushed from the
+             paired Wear OS device. Persists each (throttled) inbound
+             token into Room history via WearInboundListener. -->
+        <service
+            android:name=".connectivity.WearInboundListener"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/geo/" />
+            </intent-filter>
+        </service>
+
         <!--
             GeoApplication implements androidx.work.Configuration.Provider so
             WorkManager initialises on demand with our HiltWorkerFactory. The

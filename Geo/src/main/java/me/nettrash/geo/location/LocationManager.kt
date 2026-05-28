@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import me.nettrash.geo.data.model.MountainData
 import me.nettrash.geo.data.model.MountainInfo
+import me.nettrash.geo.util.QnhRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -23,7 +24,8 @@ import kotlin.math.sqrt
 
 @Singleton
 class LocationManager @Inject constructor(
-    @param:ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context,
+    private val qnhRepository: QnhRepository
 ) {
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
@@ -65,6 +67,10 @@ class LocationManager @Inject constructor(
             result.lastLocation?.let { loc ->
                 _location.value = loc
                 refreshClosestMountain(loc)
+                // Give QnhRepository a chance to refresh on each
+                // fix; it self-throttles by distance and time, so
+                // calling it every tick is cheap.
+                qnhRepository.maybeRefresh(loc)
                 onLocationUpdated?.invoke(loc)
 
                 val now = System.currentTimeMillis()

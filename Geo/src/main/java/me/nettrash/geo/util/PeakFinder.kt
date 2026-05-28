@@ -6,6 +6,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import me.nettrash.geo.ar.TerrainElevationService
 import me.nettrash.geo.data.model.MountainData
 import me.nettrash.geo.data.model.NearbyPeak
 import okhttp3.OkHttpClient
@@ -19,8 +20,15 @@ import javax.inject.Singleton
 /**
  * Discovers nearby peaks by merging:
  *
- *   • Live OpenStreetMap Overpass results (`natural=peak` nodes /
- *     ways / relations within [searchRadius]).
+ *   • Live OpenStreetMap Overpass results — `natural=peak` **nodes
+ *     only** within [searchRadius]. Ways and relations are
+ *     deliberately excluded because they're mostly noise (summit
+ *     ridges and large areas whose centre coordinate isn't a peak
+ *     location). Peaks missing an `ele` tag get their altitude
+ *     resolved via [TerrainElevationService] in one batched call,
+ *     and are dropped entirely if the DEM also has nothing for
+ *     them — no placeholder altitudes that float fake peaks above
+ *     the horizon.
  *   • Known mountains from the app's bundled mountain data
  *     (`MountainData.highest`, `sevenPeaks`, `snowLeopardOfRussia`).
  *
@@ -37,7 +45,9 @@ import javax.inject.Singleton
  *      for hours.
  */
 @Singleton
-class PeakFinder @Inject constructor() {
+class PeakFinder @Inject constructor(
+    private val terrain: TerrainElevationService
+) {
 
     private val searchRadius = 5_000.0   // 5 km
     private val minimumSearchDistance = 500.0 // re-search after 500 m of movement
@@ -153,14 +163,25 @@ class PeakFinder @Inject constructor() {
     }
 
     /**
-     * Query OpenStreetMap Overpass API.
+     * Query OpenStreetMap Overpass API for `natural=peak` nodes
+     * only.
      *
-     * Widening note vs the previous version: we now accept
-     * `way["natural"="peak"]` and `relation["natural"="peak"]` too,
-     * not just nodes — Overpass has a non-trivial number of named
-     * peaks expressed as ways (e.g. summit ridges).
+     * **Why nodes only**: `way["natural"="peak"]` and
+     * `relation["natural"="peak"]` bring in summit ridges and large
+     * areas whose `center` coordinate is meaningless as a peak
+     * location, plus they massively widen the result set with low-
+     * quality entries. The brief explicitly calls this out as a
+     * pitfall to avoid — keeping it tight matches iOS after the
+     * `MKLocalSearch("mountain peak")` removal.
+     *
+     * **Altitudes**: a peak's `ele` tag is preferred. If absent, we
+     * batch all such peaks into one Open-Elevation lookup; if that
+     * still fails, the peak is dropped rather than rendered at a
+     * placeholder altitude like `userAltitude + 100` (also a brief-
+     * called-out pitfall — those placeholders put fake peaks on the
+     * horizon).
      */
-    private fun searchOpenStreetMap(location: Location): List<NearbyPeak> {
+    private suspend fun searchOpenStreetMap(location: Location): List<NearbyPeak> {
         // Quantise lat/lon to ~110 m grid before sending to the
         // public API. Mirrors iOS privacy note.
         val qLat = (location.latitude * 1000).toInt() / 1000.0
@@ -169,55 +190,78 @@ class PeakFinder @Inject constructor() {
 
         val query = """
             [out:json][timeout:10];
-            (
-              node["natural"="peak"](around:$radiusMeters,$qLat,$qLon);
-              way["natural"="peak"](around:$radiusMeters,$qLat,$qLon);
-              relation["natural"="peak"](around:$radiusMeters,$qLat,$qLon);
-            );
-            out body center;
+            node["natural"="peak"](around:$radiusMeters,$qLat,$qLon);
+            out body;
         """.trimIndent()
 
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val url = "https://overpass-api.de/api/interpreter?data=$encodedQuery"
 
-        return try {
+        val elements: List<OverpassElement> = try {
             val request = Request.Builder().url(url).build()
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) return emptyList()
-
             val body = response.body.string()
-            val result = json.decodeFromString<OverpassResponse>(body)
-
-            result.elements.mapNotNull { element ->
-                val name = element.tags?.name ?: return@mapNotNull null
-                if (name.isBlank()) return@mapNotNull null
-
-                // Nodes carry lat/lon; ways/relations carry center.
-                val lat = element.lat ?: element.center?.lat ?: return@mapNotNull null
-                val lon = element.lon ?: element.center?.lon ?: return@mapNotNull null
-
-                val distance = GeoCalculations.distanceBetween(
-                    location.latitude, location.longitude, lat, lon
-                )
-                if (distance > searchRadius) return@mapNotNull null
-
-                val bearing = GeoCalculations.bearing(
-                    location.latitude, location.longitude, lat, lon
-                )
-                val altitude = element.tags.ele?.toDoubleOrNull() ?: (location.altitude + 100)
-
-                NearbyPeak.create(
-                    name = name,
-                    latitude = lat,
-                    longitude = lon,
-                    altitude = altitude,
-                    distance = distance,
-                    bearing = bearing
-                )
-            }
+            json.decodeFromString<OverpassResponse>(body).elements
         } catch (e: Exception) {
             AppLog.ar.warn("OpenStreetMap peak search failed", e)
+            return emptyList()
+        }
+
+        // Stage 1: candidates that have an `ele` tag — keep them
+        // directly. Candidates without `ele` go to a second stage
+        // for a batched DEM lookup.
+        data class Candidate(
+            val name: String,
+            val lat: Double,
+            val lon: Double,
+            val distance: Double,
+            val bearing: Double,
+            val knownAltitude: Double?  // null → needs DEM resolution
+        )
+
+        val candidates = elements.mapNotNull { element ->
+            val name = element.tags?.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val lat = element.lat ?: return@mapNotNull null
+            val lon = element.lon ?: return@mapNotNull null
+
+            val d = GeoCalculations.distanceBetween(
+                location.latitude, location.longitude, lat, lon
+            )
+            if (d > searchRadius) return@mapNotNull null
+
+            val b = GeoCalculations.bearing(
+                location.latitude, location.longitude, lat, lon
+            )
+            val ele = element.tags.ele?.toDoubleOrNull()
+            Candidate(name, lat, lon, d, b, ele)
+        }
+
+        // Stage 2: batch-resolve any candidate without an `ele` via
+        // the same Open-Elevation client the skyline uses. One HTTP
+        // round-trip for the whole set.
+        val needingDem = candidates.filter { it.knownAltitude == null }
+        val resolvedAltitudes: List<Double?> = if (needingDem.isEmpty()) {
             emptyList()
+        } else {
+            terrain.elevations(needingDem.map { it.lat to it.lon })
+        }
+
+        // Recombine, dropping any candidate whose altitude is still
+        // unknown (neither `ele` nor DEM produced a value).
+        var demIdx = 0
+        return candidates.mapNotNull { c ->
+            val altitude = c.knownAltitude
+                ?: resolvedAltitudes.getOrNull(demIdx++)
+                ?: return@mapNotNull null
+            NearbyPeak.create(
+                name = c.name,
+                latitude = c.lat,
+                longitude = c.lon,
+                altitude = altitude,
+                distance = c.distance,
+                bearing = c.bearing
+            )
         }
     }
 
@@ -263,18 +307,13 @@ private data class OverpassResponse(
     val elements: List<OverpassElement> = emptyList()
 )
 
+// Nodes-only query → no `center` field; everything is a top-level
+// (lat, lon) pair.
 @Serializable
 private data class OverpassElement(
     val lat: Double? = null,
     val lon: Double? = null,
-    val center: OverpassCenter? = null,
     val tags: OverpassTags? = null
-)
-
-@Serializable
-private data class OverpassCenter(
-    val lat: Double,
-    val lon: Double
 )
 
 @Serializable

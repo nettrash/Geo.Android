@@ -36,7 +36,7 @@ data class WearInformationToken(
     val recordDate: Long = 0L,
     val gpsAltitude: Double = 0.0,
     val gpsSpeed: Double = 0.0,
-    val barPressure: Double = 0.0,
+    val barPreassure: Double = 0.0,
     val barAltitude: Double = 0.0,
     val gpsLatitude: Double = 0.0,
     val gpsLongitude: Double = 0.0

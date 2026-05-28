@@ -81,7 +81,7 @@ class BarometerRefreshWorker @AssistedInject constructor(
             recordDate = System.currentTimeMillis(),
             gpsAltitude  = previous?.gpsAltitude ?: 0.0,
             gpsSpeed     = previous?.gpsSpeed ?: 0.0,
-            barPressure  = pressureKpa,
+            barPreassure = pressureKpa,
             barAltitude  = altitude,
             gpsLatitude  = previous?.gpsLatitude ?: 0.0,
             gpsLongitude = previous?.gpsLongitude ?: 0.0

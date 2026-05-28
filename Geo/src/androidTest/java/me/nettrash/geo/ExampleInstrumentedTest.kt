@@ -1,24 +1,17 @@
 package me.nettrash.geo
 
-import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.ext.junit.runners.AndroidJUnit4
-
-import org.junit.Test
-import org.junit.runner.RunWith
-
-import org.junit.Assert.*
-
-/**
- * Instrumented test, which will execute on an Android device.
- *
- * See [testing documentation](http://d.android.com/tools/testing).
- */
-@RunWith(AndroidJUnit4::class)
-class ExampleInstrumentedTest {
-    @Test
-    fun useAppContext() {
-        // Context of the app under test.
-        val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("me.nettrash.geo", appContext.packageName)
-    }
-}
+// Placeholder kept so the `:Geo:androidTestClasses` task has a
+// source set to compile. The Android-Studio-scaffolded
+// `ExampleInstrumentedTest` referenced `androidx.test.ext.junit`
+// and `androidx.test.platform.app` classes that were never wired
+// into the module's `androidTestImplementation`. Removing it
+// without putting *something* here would leave the androidTest
+// source set empty, which Gradle treats as a configuration error
+// when an IDE asks for `androidTestClasses`.
+//
+// Add real instrumented tests here; when you do, also add the
+// androidx.test dependencies to `Geo/build.gradle.kts`:
+//
+//   androidTestImplementation(libs.androidx.test.ext.junit)
+//   androidTestImplementation(libs.androidx.test.runner)
+//   androidTestImplementation(libs.androidx.test.espresso.core)

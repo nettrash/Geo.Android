@@ -2,6 +2,7 @@ package me.nettrash.geo.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 data class MountainData(
@@ -33,7 +34,21 @@ data class MountainInfo(
     val firstAscent: String? = null,
     val ascents: Int? = null,
     val attemptsToAscend: Int? = null
-)
+) {
+    /**
+     * Full assets-folder path to the bundled photo for this peak,
+     * e.g. `"mountains/highest/2.jpg"`. Computed by [MountainLoader]
+     * after JSON deserialization because the path depends on which
+     * list the mountain came from (highest / sevenPeaks /
+     * snowLeopardOfRussia), and the JSON itself only carries the
+     * filename. `null` if the mountain has no `image` field.
+     *
+     * `@Transient` so kotlinx-serialization doesn't try to encode /
+     * decode it — it's a derived field only ever set in-process.
+     */
+    @Transient
+    var imageAssetPath: String? = null
+}
 
 @Serializable
 data class MountainCoordinates(

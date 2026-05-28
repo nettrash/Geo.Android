@@ -53,5 +53,25 @@
                     android:pathPrefix="/geo/" />
             </intent-filter>
         </service>
+
+        <!--
+            Glanceable Wear OS Tile. The Wear-OS analogue of iOS's
+            complication families — the user adds Geo's tile to their
+            tile carousel and gets altitude + pressure at a swipe.
+            Mirrors iOS AltitudeRectangularView.
+        -->
+        <service
+            android:name=".tile.GeoTileService"
+            android:label="@string/tile_label"
+            android:description="@string/tile_description"
+            android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/tile_preview" />
+        </service>
     </application>
 </manifest>

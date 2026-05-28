@@ -67,14 +67,14 @@ class WidgetUpdater @Inject constructor(
             recordDate = System.currentTimeMillis(),
             gpsAltitude = loc?.altitude ?: 0.0,
             gpsSpeed = maxOf(loc?.speed?.toDouble() ?: 0.0, 0.0),
-            barPressure = barometerManager.pressure.value,
+            barPreassure =barometerManager.pressure.value,
             barAltitude = barometerManager.height.value,
             gpsLatitude = loc?.latitude ?: 0.0,
             gpsLongitude = loc?.longitude ?: 0.0
         )
         WidgetDataStore.write(
             context     = context,
-            pressureKpa = token.barPressure,
+            pressureKpa = token.barPreassure,
             barAltitude = token.barAltitude,
             gpsAltitude = token.gpsAltitude,
             gpsSpeed    = token.gpsSpeed,

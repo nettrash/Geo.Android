@@ -55,10 +55,19 @@ class SkylineCalculator @Inject constructor(
 
     private val bearingStepDeg = 2.0
     private val maxRangeMeters = 200_000.0
+
+    /**
+     * Distance grid sampled along each bearing ray. Consecutive
+     * ratio ≤ 1.5× so no real ridge falls into a sampling gap —
+     * earlier doubling steps (8 → 16 → 32 km) missed prominent
+     * peaks that happened to sit in the middle of a gap. 20 entries
+     * out to 200 km matches the brief's prescription byte-for-byte.
+     */
     private val distancesMeters: List<Double> = listOf(
-        100.0, 200.0, 300.0,
-        500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0,
-        16_000.0, 32_000.0, 64_000.0, 128_000.0, 200_000.0
+        100.0, 200.0, 400.0, 600.0, 800.0,
+        1_000.0, 1_500.0, 2_000.0, 3_000.0, 5_000.0,
+        7_000.0, 10_000.0, 15_000.0, 22_000.0, 32_000.0,
+        48_000.0, 70_000.0, 100_000.0, 140_000.0, 200_000.0
     )
 
     private var lastObserver: Location? = null

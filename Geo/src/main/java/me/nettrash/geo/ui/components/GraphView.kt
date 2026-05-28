@@ -101,13 +101,17 @@ fun GeoGraphView(
                         val y = graphHeight * (1f - (item.value - min) / lineRange)
                         if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
                     }
-                    drawPath(path, Color.White, style = Stroke(width = 2f))
+                    drawPath(path, Color.White, style = Stroke(width = 2.dp.toPx()))
 
-                    // Vertices
+                    // Vertices. Use dp-converted-to-px so high-DPI
+                    // screens (Pixel 8 Pro is ~480ppi, density ~3.0)
+                    // render visible dots — `radius = 2f` was 2
+                    // pixels = ⅔ dp, basically invisible.
+                    val vertexRadius = 3.dp.toPx()
                     data.forEachIndexed { idx, item ->
                         val x = idx * step
                         val y = graphHeight * (1f - (item.value - min) / lineRange)
-                        drawCircle(Color.White, radius = 2f, center = Offset(x, y))
+                        drawCircle(Color.White, radius = vertexRadius, center = Offset(x, y))
                     }
                 }
             }
@@ -212,10 +216,16 @@ fun GeoGraphPointsView(
                     }
                 }
 
-                // Data lines
+                // Data lines + per-series vertex dots. The iOS
+                // tracking chart draws filled circles at each sample
+                // so the user can see exactly when each reading
+                // landed — without them the line just feels like a
+                // smooth gradient.
                 if (data.size >= 2 && lineRange > 0) {
                     val numSeries = data.first().values.size
                     val step = graphWidth / (data.size - 1).coerceAtLeast(1)
+                    val strokeWidth = 2.dp.toPx()
+                    val vertexRadius = 3.dp.toPx()
 
                     for (seriesIdx in 0 until numSeries) {
                         val color = if (seriesIdx < colors.size) colors[seriesIdx] else Color.White
@@ -226,7 +236,16 @@ fun GeoGraphPointsView(
                             val y = graphHeight * (1f - (value - min) / lineRange)
                             if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
                         }
-                        drawPath(path, color, style = Stroke(width = 2f))
+                        drawPath(path, color, style = Stroke(width = strokeWidth))
+
+                        // Vertices for this series — filled circles
+                        // in the same colour as the line.
+                        data.forEachIndexed { idx, point ->
+                            val value = if (seriesIdx < point.values.size) point.values[seriesIdx] else 0f
+                            val x = idx * step
+                            val y = graphHeight * (1f - (value - min) / lineRange)
+                            drawCircle(color, radius = vertexRadius, center = Offset(x, y))
+                        }
                     }
                 }
             }

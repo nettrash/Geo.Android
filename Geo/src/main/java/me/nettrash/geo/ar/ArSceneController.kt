@@ -86,14 +86,57 @@ class ArSceneController {
     private val _depthSnapshot = MutableStateFlow<DepthSnapshot?>(null)
     val depthSnapshot: StateFlow<DepthSnapshot?> = _depthSnapshot.asStateFlow()
 
-    /** True once the session has confirmed depth API support. */
+    /**
+     * `true` once we've actually decoded a depth frame from this AR
+     * session. Drives the "Depth" badge in the UI and the depth-
+     * sampling branch of [ArOcclusionManager].
+     *
+     * Why not just `Session.isDepthModeSupported`? Some devices
+     * (Pixel 4a 5G, certain Samsung models) advertise depth support
+     * via that API but ARCore's motion-stereo pipeline fails
+     * internally at frame-acquisition time on their cameras (see
+     * the `spherical_rectifier.cc: kUnrectifiedOriginal` native
+     * error). Reporting depth as "supported" when it's actually
+     * broken misleads the user and the occlusion logic. Flipping
+     * this flag only after a successful decode gives us ground
+     * truth.
+     */
     private val _isDepthSupported = MutableStateFlow(false)
     val isDepthSupported: StateFlow<Boolean> = _isDepthSupported.asStateFlow()
 
-    /** Called by the AR session configuration callback once we
-     *  know whether the device supports depth mode. */
-    fun setDepthSupported(supported: Boolean) {
-        _isDepthSupported.value = supported
+    /**
+     * Internal: did we ask ARCore to enable depth mode in the
+     * session config? Only when this is `true` do we attempt to
+     * acquire depth images — saves cycles on devices that don't
+     * report capability at all. Independent of [_isDepthSupported]
+     * because *enabling* the mode and *getting a usable frame*
+     * aren't the same thing on every device.
+     */
+    private var depthConfigEnabled = false
+
+    /** Centre hit-test throttle. ARCore's native `hit_test.cc`
+     *  logs a WARNING any time a hit-test returns no point, so
+     *  calling it every frame floods logcat. 250 ms (≈4 Hz) is
+     *  fast enough for the crosshair distance label to feel live
+     *  and cuts the noise volume roughly 15× at 60 fps. */
+    private var lastHitTestMs = 0L
+    private val hitTestThrottleMs = 250L
+
+    /**
+     * Called by the AR session configuration callback to record
+     * whether depth mode was enabled in the session config. We try
+     * to acquire depth frames whenever this is true; the public
+     * [isDepthSupported] flag only flips once a frame actually
+     * decodes.
+     */
+    fun setDepthConfigEnabled(enabled: Boolean) {
+        depthConfigEnabled = enabled
+        if (!enabled) {
+            // If a previous session had depth working and the user
+            // turned it off (or we're reconfiguring without it),
+            // reset the public flag too so the badge clears.
+            _isDepthSupported.value = false
+        }
     }
 
     /**
@@ -134,39 +177,58 @@ class ArSceneController {
         // We try a few result types in priority order and pick the
         // first that fires — mirrors iOS's LiDAR → raycast → plane
         // ordering.
-        try {
-            val centreX = viewportWidthPx / 2f
-            val centreY = viewportHeightPx / 2f
-            val hits = frame.hitTest(centreX, centreY)
-            if (hits.isNotEmpty()) {
-                // Prefer depth-API hits, then estimated-plane, then anything else.
-                val first = hits.firstOrNull { it.trackable is com.google.ar.core.DepthPoint }
-                    ?: hits.firstOrNull { it.trackable is com.google.ar.core.Plane }
-                    ?: hits.first()
-                val cameraToHit = floatArrayOf(
-                    first.hitPose.tx() - pos[0],
-                    first.hitPose.ty() - pos[1],
-                    first.hitPose.tz() - pos[2]
-                )
-                val dist = kotlin.math.sqrt(
-                    cameraToHit[0] * cameraToHit[0] +
-                        cameraToHit[1] * cameraToHit[1] +
-                        cameraToHit[2] * cameraToHit[2]
-                )
-                _wallDistance.value = dist
-                _distanceSource.value = when (first.trackable) {
-                    is com.google.ar.core.DepthPoint -> DistanceSource.DEPTH
-                    is com.google.ar.core.Plane      -> DistanceSource.PLANE
-                    else                              -> DistanceSource.RAYCAST
+        // Centre hit-test — gives us the "wall distance" label in the
+        // crosshair AND fuels the distance-source badge. Throttled to
+        // ~4 Hz and skipped entirely while no planes have been
+        // detected yet, both to cut native ARCore log noise (each
+        // call can trigger a "no point hit" warning) and to lighten
+        // per-frame CPU work. The label updates fast enough that 4
+        // Hz feels live.
+        val nowMs = System.currentTimeMillis()
+        val planeAvailable = _verticalPlanes.value.isNotEmpty()
+        val depthAvailable = _depthSnapshot.value != null
+        val ready = planeAvailable || depthAvailable
+        if (ready && nowMs - lastHitTestMs >= hitTestThrottleMs) {
+            lastHitTestMs = nowMs
+            try {
+                val centreX = viewportWidthPx / 2f
+                val centreY = viewportHeightPx / 2f
+                val hits = frame.hitTest(centreX, centreY)
+                if (hits.isNotEmpty()) {
+                    // Prefer depth-API hits, then estimated-plane, then anything else.
+                    val first = hits.firstOrNull { it.trackable is com.google.ar.core.DepthPoint }
+                        ?: hits.firstOrNull { it.trackable is com.google.ar.core.Plane }
+                        ?: hits.first()
+                    val cameraToHit = floatArrayOf(
+                        first.hitPose.tx() - pos[0],
+                        first.hitPose.ty() - pos[1],
+                        first.hitPose.tz() - pos[2]
+                    )
+                    val dist = kotlin.math.sqrt(
+                        cameraToHit[0] * cameraToHit[0] +
+                            cameraToHit[1] * cameraToHit[1] +
+                            cameraToHit[2] * cameraToHit[2]
+                    )
+                    _wallDistance.value = dist
+                    _distanceSource.value = when (first.trackable) {
+                        is com.google.ar.core.DepthPoint -> DistanceSource.DEPTH
+                        is com.google.ar.core.Plane      -> DistanceSource.PLANE
+                        else                              -> DistanceSource.RAYCAST
+                    }
+                } else {
+                    _wallDistance.value = null
+                    _distanceSource.value = null
                 }
-            } else {
+            } catch (t: Throwable) {
+                // ARCore can throw NotYetAvailableException early on.
                 _wallDistance.value = null
                 _distanceSource.value = null
             }
-        } catch (t: Throwable) {
-            // ARCore can throw NotYetAvailableException early on.
-            _wallDistance.value = null
-            _distanceSource.value = null
+        } else if (!ready) {
+            // Make sure the crosshair label clears while we're still
+            // waiting for the session to warm up.
+            if (_wallDistance.value != null) _wallDistance.value = null
+            if (_distanceSource.value != null) _distanceSource.value = null
         }
 
         // Snapshot vertical planes for the occlusion thread.
@@ -192,8 +254,12 @@ class ArSceneController {
             }
         }
 
-        // Snapshot depth image if the device supports it.
-        if (_isDepthSupported.value) {
+        // Snapshot depth image only if the session was configured
+        // for depth in the first place. Each successful decode flips
+        // `_isDepthSupported` from false → true; we never flip it
+        // back, since a single proven-good frame means the hardware
+        // path works and any subsequent failures are transient.
+        if (depthConfigEnabled) {
             try {
                 frame.acquireDepthImage16Bits().use { img ->
                     val plane0 = img.planes[0]
@@ -206,13 +272,21 @@ class ArSceneController {
                         rowStrideBytes = plane0.rowStride,
                         pixels = bytes
                     )
+                    if (!_isDepthSupported.value) {
+                        _isDepthSupported.value = true
+                    }
                 }
             } catch (t: Throwable) {
-                // NotYetAvailableException is common on early frames;
-                // also some devices report depth-supported but throw
-                // NotYetAvailableException for the whole session.
-                // Leave the previous snapshot in place — occlusion
-                // gracefully degrades to plane-only.
+                // NotYetAvailableException is the common case on
+                // early frames before ARCore has produced its first
+                // depth output. On devices where depth is reported
+                // as supported but doesn't actually work (e.g. the
+                // `spherical_rectifier kUnrectifiedOriginal` native
+                // error path), this exception keeps firing for the
+                // whole session and `_isDepthSupported` stays
+                // `false` — which is what we want so the UI and
+                // occlusion logic don't pretend depth is working
+                // when it isn't.
             }
         }
     }

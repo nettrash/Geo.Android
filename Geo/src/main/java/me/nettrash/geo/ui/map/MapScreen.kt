@@ -34,6 +34,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.LaunchedEffect
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
@@ -47,6 +49,9 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import me.nettrash.geo.data.model.MountainInfo
 import me.nettrash.geo.ui.GeoViewModel
+import me.nettrash.geo.ui.components.AssetImage
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -67,7 +72,29 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
     val userLatLng = location?.let { LatLng(it.latitude, it.longitude) } ?: LatLng(0.0, 0.0)
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(userLatLng, 8f)
+        // Initialise at street-level zoom so the user lands on
+        // "where am I" rather than country-level "Earth in
+        // general". 16f ≈ buildings clearly resolvable.
+        position = CameraPosition.fromLatLngZoom(userLatLng, STREET_ZOOM)
+    }
+    // The initializer above only runs once — if `location` was null
+    // on first composition, the camera sat at (0,0). Animate to the
+    // user's real position the first time we get a fix. Only fires
+    // once so subsequent location updates don't yank the camera back
+    // mid-pan.
+    var hasCenteredOnUser by remember { mutableStateOf(false) }
+    LaunchedEffect(location) {
+        val loc = location
+        if (loc != null && !hasCenteredOnUser) {
+            hasCenteredOnUser = true
+            cameraPositionState.animate(
+                update = CameraUpdateFactory.newLatLngZoom(
+                    LatLng(loc.latitude, loc.longitude),
+                    STREET_ZOOM
+                ),
+                durationMs = 600
+            )
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -163,6 +190,24 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 val mountain = selectedMountain!!
                 val unknownText = stringResource(R.string.fallback_unknown)
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Photo. Bundled in assets/mountains/<list>/<file>;
+                    // path computed at load time so each peak knows
+                    // which sub-folder it lives in. Renders nothing
+                    // when the mountain has no image or the asset is
+                    // missing.
+                    mountain.imageAssetPath?.let { path ->
+                        AssetImage(
+                            path = path,
+                            contentDescription = mountain.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+
                     Text(
                         mountain.name ?: unknownText,
                         fontSize = 20.sp,
@@ -231,6 +276,14 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
     }
 }
+
+/**
+ * Street-level zoom: Google Maps' zoom scale is logarithmic; 16
+ * lands at roughly "individual buildings visible" which matches the
+ * "open map → see where I am" intent. 17 is too zoomed for users
+ * who want to spot nearby peaks.
+ */
+private const val STREET_ZOOM = 16f
 
 @Composable
 private fun DetailRow(label: String, value: String) {

@@ -159,14 +159,14 @@ class GeoViewModel @Inject constructor(
             viewModelScope.launch {
                 var inserted = 0
                 for (token in buffered) {
-                    if (token.barPressure <= 0) continue
+                    if (token.barPreassure <= 0) continue
                     val existing = historyRepository.findByRecordDate(token.recordDate)
                     if (existing != null) continue
                     historyRepository.insert(
                         HistoryItem(
                             recordDate        = token.recordDate,
                             barometerAltitude = token.barAltitude,
-                            barometerPressure = token.barPressure,
+                            barometerPressure = token.barPreassure,
                             gpsLatitude       = token.gpsLatitude,
                             gpsLongitude      = token.gpsLongitude,
                             gpsAltitude       = token.gpsAltitude,
@@ -244,7 +244,14 @@ class GeoViewModel @Inject constructor(
     fun loadARHistoryPoints() {
         val userLoc = locationManager.location.value ?: return
         viewModelScope.launch {
-            val items = historyRepository.getRecentItems(200)
+            // Time-filter first, area-filter second. Mirrors the
+            // iOS port's correction: we want "the user's 10 most
+            // recent points, of which we render the nearby ones",
+            // NOT "any of the last 200 points that happen to be
+            // within range" — the latter put 6-month-old markers
+            // back into the AR scene when the user wandered close
+            // to an old position.
+            val items = historyRepository.getRecentItems(10)
             val maxDistance = 1000.0
 
             _arHistoryPoints.value = items.mapNotNull { item ->
