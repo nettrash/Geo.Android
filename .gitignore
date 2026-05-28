@@ -1,27 +1,35 @@
+# IntelliJ / Android Studio
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+.idea/
+!.idea/codeStyles/
+!.idea/runConfigurations/
+
+# Gradle
+.gradle/
+**/build/
+
+# Local environment
 local.properties
 
-# Keystore files (never commit signing material)
+# Android build outputs and generated files
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+Geo/release/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Signing and secrets
 *.jks
 *.keystore
 keystore.properties
 
-# Play Console service-account JSON (for any future release workflow)
+# Play Console service account
 play-service-account.json
 
+# Tooling
 .claude/
-
-build/
