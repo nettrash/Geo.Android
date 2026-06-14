@@ -395,7 +395,12 @@ private fun solarCountdownText(
     times.sunset?.let { if (now < it) return "${countdownString(it - now)} to sunset" }
     if (times.isPolarDay) return context.getString(R.string.solar_sun_up)
     if (times.isPolarNight) return context.getString(R.string.solar_polar_night)
-    val tomorrow = Solar.times(now + 86_400_000L, lat, lon, alt)
+    // Advance one *local* day (DST-aware) rather than a fixed 86 400 000 ms,
+    // which would skip a day in the late evening before a spring-forward.
+    val cal = java.util.Calendar.getInstance()
+    cal.timeInMillis = now
+    cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+    val tomorrow = Solar.times(cal.timeInMillis, lat, lon, alt)
     tomorrow.sunrise?.let { return "${countdownString(it - now)} to sunrise" }
     return "—"
 }
