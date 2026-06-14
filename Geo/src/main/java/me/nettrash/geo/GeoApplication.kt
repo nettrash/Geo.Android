@@ -8,6 +8,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import me.nettrash.geo.location.LocationManager
+import me.nettrash.geo.notification.StormNotifier
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.widget.WidgetUpdater
@@ -29,6 +30,10 @@ class GeoApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Create the weather-alerts notification channel up-front so the
+        // storm warning (M5a) has somewhere to post on Android 8+.
+        StormNotifier.ensureChannel(this)
 
         // Mirrors iOS GeoAppDelegate.registerBackgroundTasks() —
         // schedule the periodic barometer sample at process start so

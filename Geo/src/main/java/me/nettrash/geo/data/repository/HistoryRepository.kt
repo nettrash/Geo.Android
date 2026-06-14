@@ -4,6 +4,9 @@ import me.nettrash.geo.data.db.HistoryDao
 import me.nettrash.geo.data.db.HistoryItem
 import me.nettrash.geo.data.model.DataItem
 import me.nettrash.geo.data.model.DataPoint
+import me.nettrash.geo.sensor.PressureSample
+import me.nettrash.geo.sensor.PressureTrend
+import me.nettrash.geo.sensor.StormWarning
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -54,6 +57,28 @@ class HistoryRepository @Inject constructor(
     /** Used by the snapshot-buffer backfill to dedup by timestamp. */
     suspend fun findByRecordDate(recordDate: Long): HistoryItem? {
         return historyDao.findByRecordDate(recordDate)
+    }
+
+    /**
+     * De-trended 3-hour barometric tendency (storm warning, M5a). Reads
+     * the last [StormWarning.WINDOW_HOURS] of RAW `barometerPressure` +
+     * `gpsAltitude` from Room, merges any [extraSamples] the caller holds
+     * that aren't yet in Room (the not-yet-drained background snapshot
+     * buffer plus the freshest sample), dedups by exact timestamp, and
+     * runs the shared [StormWarning] fit. The fit is byte-identical to
+     * iOS `StormWarning.tendency`.
+     */
+    suspend fun pressureTendency(extraSamples: List<PressureSample>, nowMs: Long): PressureTrend {
+        val cutoff = nowMs - (StormWarning.WINDOW_HOURS * 3_600_000.0).toLong()
+        val roomSamples = historyDao.getItemsSince(cutoff).map {
+            PressureSample(it.recordDate, it.barometerPressure, it.gpsAltitude)
+        }
+        val merged = (roomSamples + extraSamples)
+            .filter { it.pressureKpa > 0 }
+            .associateBy { it.dateMs }   // dedup by exact timestamp
+            .values
+            .sortedBy { it.dateMs }
+        return StormWarning.tendency(merged, nowMs)
     }
 
     fun buildPressureDataSet(items: List<HistoryItem>): Triple<List<DataItem>, Float, Float> {

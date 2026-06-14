@@ -36,6 +36,15 @@ hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus
   throttle is now atomic; assorted AR/skyline fixes.
 
 ### Added
+- **Storm warning** — the classic mountaineering/sailing barometer use: a single
+  advisory "pressure falling fast" notification when the barometer drops sharply
+  (the leading above-tree-line storm indicator). The 3-hour tendency is a
+  least-squares fit over raw station pressure, **de-trended by GPS altitude** so a
+  climb — which also drops pressure — never false-fires; it alerts once per onset
+  (3-hour cooldown). A live 3-hour trend chip also appears on the Info barometer
+  card. Adds the `POST_NOTIFICATIONS` permission (Android 13+) and a `weather_alerts`
+  notification channel, requested at first launch; a denial degrades silently;
+  background timing is OS-throttled, so the alert is best-effort.
 - Persistent, LRU-bounded on-device elevation cache (instant offline skyline).
 - History retention: automatic ~1-year prune plus a **Clear history** action.
 - One jittered retry/backoff + request spacing on the public APIs (respecting
