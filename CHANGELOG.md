@@ -6,7 +6,7 @@ Play `versionCode`; note that `versionCode` auto-increments on every
 assemble/bundle, so the value actually uploaded to Play may be higher than the
 one recorded here.
 
-## [1.1] — 2026-06-14 (versionCode 52)
+## [1.1] — 2026-06-14
 
 A correctness, accuracy and reliability release: a critical first-run fix, a
 hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus

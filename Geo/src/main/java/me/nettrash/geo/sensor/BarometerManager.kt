@@ -57,14 +57,20 @@ class BarometerManager @Inject constructor(
 
     var onDataUpdated: (() -> Unit)? = null
 
+    private var isStarted = false
+
     fun start() {
+        if (isStarted) return
         pressureSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            isStarted = true
         }
     }
 
     fun stop() {
+        if (!isStarted) return
         sensorManager.unregisterListener(this)
+        isStarted = false
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -85,7 +91,7 @@ class BarometerManager @Inject constructor(
             // barometric formula with proper temperature lapse,
             // which `ln(p0 / p) / 0.00012` approximates badly at
             // altitudes more than a couple of km.
-            SensorManager.getAltitude(qnhHpa.toFloat(), pressureHpa).toDouble()
+            SensorManager.getAltitude(qnhHpa.toFloat(), (pressureKpa * 10.0).toFloat()).toDouble()
         } else {
             // Uncalibrated fallback — lapse-rate standard-atmosphere
             // altitude (#10) so the readings don't suddenly stall at

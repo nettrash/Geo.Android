@@ -1,7 +1,6 @@
 name: Android CI
 
 # Build, lint and test the Geo Android + Wear app on every push / PR.
-# (Release-to-Play lives in release.yml, triggered by `v*` tags.)
 
 on:
   push:

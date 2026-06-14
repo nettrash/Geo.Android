@@ -81,7 +81,7 @@ class BarometerRefreshWorker @AssistedInject constructor(
         // agreement with the app and with iOS's calibrated path.
         val qnhHpa = qnhRepository.lastKnownQnhHpa()
         val altitude: Double = if (qnhHpa != null) {
-            SensorManager.getAltitude(qnhHpa.toFloat(), pressureHpa).toDouble()
+            SensorManager.getAltitude(qnhHpa.toFloat(), (pressureKpa * 10.0).toFloat()).toDouble()
         } else {
             Atmosphere.altitude(pressureKpa)
         }

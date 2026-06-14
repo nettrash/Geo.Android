@@ -60,19 +60,16 @@ class RetryInterceptor(
     /** Sleep just long enough to keep at least [minIntervalMs] between
      *  consecutive requests issued through this interceptor. */
     private fun throttle() {
-        if (minIntervalMs <= 0L) {
-            lastRequestAtMs.set(System.currentTimeMillis())
-            return
-        }
+        if (minIntervalMs <= 0L) return
         val now = System.currentTimeMillis()
-        val last = lastRequestAtMs.get()
-        if (last != 0L) {
-            val elapsed = now - last
-            if (elapsed in 0 until minIntervalMs) {
-                sleepQuietly(minIntervalMs - elapsed)
-            }
+        // Atomically reserve this request's slot so concurrent OkHttp calls are
+        // actually spaced out — a plain get/sleep/set lets two callers read the
+        // same timestamp and both skip the wait. `lastRequestAtMs` holds the
+        // next-allowed time, advanced monotonically by minIntervalMs.
+        val slot = lastRequestAtMs.updateAndGet { prev ->
+            if (prev == 0L) now else maxOf(now, prev + minIntervalMs)
         }
-        lastRequestAtMs.set(System.currentTimeMillis())
+        sleepQuietly(slot - now)
     }
 
     /** Parse a `Retry-After` header given as an integer number of

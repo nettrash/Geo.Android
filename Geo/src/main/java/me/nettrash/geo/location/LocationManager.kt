@@ -108,7 +108,7 @@ class LocationManager @Inject constructor(
                 onLocationUpdated?.invoke(loc)
 
                 val now = System.currentTimeMillis()
-                val today = currentDayOfYear()
+                val today = currentDayKey()
                 val step = stepLocation
                 if (step != null) {
                     val distance = step.distanceTo(loc)
@@ -195,8 +195,12 @@ class LocationManager @Inject constructor(
         isSubscribed = false
     }
 
-    private fun currentDayOfYear(): Int {
-        return Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
+    private fun currentDayKey(): Int {
+        // Year-unique day key. `DAY_OF_YEAR` alone repeats every year (Jan 1 is
+        // day 1 each year), which would suppress the daily-rollover record on
+        // the first day of a new year.
+        val cal = Calendar.getInstance()
+        return cal.get(Calendar.YEAR) * 1000 + cal.get(Calendar.DAY_OF_YEAR)
     }
 
     fun onBarometerUpdated(pressure: Double, height: Double) {
