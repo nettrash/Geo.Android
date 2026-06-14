@@ -19,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nettrash.geo.sensor.PressureTrendClass
 import me.nettrash.geo.ui.GeoViewModel
 import java.util.Locale
 
@@ -44,6 +46,10 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val height by viewModel.barometerManager.height.collectAsState()
     val everest by viewModel.barometerManager.everest.collectAsState()
     val hasAbsoluteFix by viewModel.barometerManager.hasAbsoluteFix.collectAsState()
+    val pressureTrend by viewModel.pressureTrend.collectAsState()
+
+    // Recompute the de-trended trend chip when the Info tab is shown.
+    LaunchedEffect(Unit) { viewModel.refreshIfNeeded() }
     val location by viewModel.locationManager.location.collectAsState()
     val closestMountain by viewModel.locationManager.closestMountain.collectAsState()
     val closestDistance by viewModel.locationManager.closestMountainDistance.collectAsState()
@@ -78,6 +84,18 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     MonoText("${String.format(Locale.US, "%.4f", pressure)} kPa")
                     MonoText("${String.format(Locale.US, "%.4f", pressure * 7.50062)} mm Hg")
                     MonoText("${String.format(Locale.US, "%.4f", pressure / 101.325)} atm")
+                }
+            }
+            if (pressureTrend.classification != PressureTrendClass.UNKNOWN) {
+                InfoRow(stringResource(R.string.field_trend)) {
+                    Text(
+                        text = trendLabel(pressureTrend.classification, pressureTrend.changeHpaOver3h),
+                        color = trendColor(pressureTrend.classification),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.End
+                    )
                 }
             }
             InfoRow(stringResource(R.string.field_altitude)) {
@@ -278,4 +296,24 @@ fun MonoText(text: String) {
         fontFamily = FontFamily.Monospace,
         textAlign = TextAlign.End
     )
+}
+
+/** Short label for the de-trended 3-hour tendency, with the magnitude
+ *  for the falling/rising classes. Mirrors iOS `trendLabel`. */
+private fun trendLabel(cls: PressureTrendClass, changeHpaOver3h: Double): String {
+    val drop = kotlin.math.abs(changeHpaOver3h)
+    return when (cls) {
+        PressureTrendClass.FALLING_FAST -> String.format(Locale.US, "↓↓ Falling fast (%.0f hPa)", drop)
+        PressureTrendClass.FALLING -> String.format(Locale.US, "↓ Falling (%.0f hPa)", drop)
+        PressureTrendClass.STEADY -> "→ Steady"
+        PressureTrendClass.RISING -> String.format(Locale.US, "↑ Rising (%.0f hPa)", drop)
+        PressureTrendClass.UNKNOWN -> ""
+    }
+}
+
+private fun trendColor(cls: PressureTrendClass): Color = when (cls) {
+    PressureTrendClass.FALLING_FAST -> Color(0xFFE53935) // red
+    PressureTrendClass.FALLING -> Color(0xFFFFC107)      // amber
+    PressureTrendClass.RISING -> Color(0xFF43A047)       // green
+    PressureTrendClass.STEADY, PressureTrendClass.UNKNOWN -> Color(0xFFB0BEC5) // muted
 }

@@ -24,6 +24,9 @@ import me.nettrash.geo.ar.SkylineCalculator
 import me.nettrash.geo.location.LocationManager
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.sensor.DeviceMotionManager
+import me.nettrash.geo.sensor.PressureSample
+import me.nettrash.geo.sensor.PressureTrend
+import me.nettrash.geo.sensor.StormWarning
 import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.MountainLoader
@@ -87,6 +90,13 @@ class GeoViewModel @Inject constructor(
     // History items for map
     private val _historyItems = MutableStateFlow<List<HistoryItem>>(emptyList())
     val historyItems: StateFlow<List<HistoryItem>> = _historyItems.asStateFlow()
+
+    /** Latest de-trended 3-hour pressure tendency (M5a), recomputed on
+     *  each history refresh. Drives the Info barometer-card trend chip;
+     *  the authoritative storm alerting runs off [me.nettrash.geo.worker
+     *  .BarometerRefreshWorker]. */
+    private val _pressureTrend = MutableStateFlow(PressureTrend.UNKNOWN)
+    val pressureTrend: StateFlow<PressureTrend> = _pressureTrend.asStateFlow()
 
     // Peaks for AR
     private val _peaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
@@ -241,6 +251,14 @@ class GeoViewModel @Inject constructor(
             _gpsAltDataSet.value = gData
             _gpsAltMin.value = gMin
             _gpsAltMax.value = gMax
+
+            // De-trended 3-hour pressure tendency (M5a). The shared fit
+            // filters to its own 3 h window, so feeding the full 30-day
+            // set is fine.
+            val samples = items.map {
+                PressureSample(it.recordDate, it.barometerPressure, it.gpsAltitude)
+            }
+            _pressureTrend.value = StormWarning.tendency(samples, System.currentTimeMillis())
         }
     }
 

@@ -1,6 +1,7 @@
 package me.nettrash.geo
 
 import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -55,12 +56,18 @@ class MainActivity : ComponentActivity() {
         // also calls refresh() internally.)
         permissionsMonitor.markLocationPromptShown()
 
-        locationPermissionRequest.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
+        // Request location + (on Android 13+) the POST_NOTIFICATIONS
+        // permission used by the storm warning (M5a) in one prompt
+        // sequence. A notification denial is a silent no-op — the worker
+        // re-checks before posting.
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        locationPermissionRequest.launch(permissions.toTypedArray())
 
         setContent {
             GeoTheme {
