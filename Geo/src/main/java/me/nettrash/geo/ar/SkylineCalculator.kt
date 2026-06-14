@@ -110,9 +110,29 @@ class SkylineCalculator @Inject constructor(
                     _samples.value = new
                 }
             } finally {
-                _isComputing.value = false
+                // Only clear the spinner if WE are still the current
+                // job. When a faster-moving observer triggers a new
+                // compute() before this pass finishes, this job is
+                // cancelled and `currentJob` already points at the
+                // replacement; clearing here would race the new job's
+                // `_isComputing.value = true` on Dispatchers.Default
+                // (no happens-before) and could latch the flow to
+                // false while the replacement is still computing.
+                if (coroutineContext[Job] == currentJob) {
+                    _isComputing.value = false
+                }
             }
         }
+    }
+
+    /** Cancel any in-flight compute so Open-Elevation batches stop.
+     *  Unlike [shutdown] this keeps [scope] alive, because the
+     *  calculator is a [Singleton] reused across AR teardown/rebuild —
+     *  a later [compute] must still be able to launch. Called from the
+     *  Nature screen's onDispose. */
+    fun cancel() {
+        currentJob?.cancel()
+        _isComputing.value = false
     }
 
     /** Stop and discard any in-flight computation. Call when the

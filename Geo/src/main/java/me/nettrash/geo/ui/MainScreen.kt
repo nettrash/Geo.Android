@@ -15,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +76,17 @@ fun MainScreen(viewModel: GeoViewModel = hiltViewModel()) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // History-consuming surfaces (Stat / Map / Nature) pull a refresh
+    // when shown; refreshIfNeeded() no-ops when the cache is clean, so
+    // the per-insert dirty flag (mirroring iOS) avoids rebuilding the
+    // graphs on every recorded sample while keeping the StateFlows the
+    // screens collect up to date the moment a tab is opened.
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != 0) {
+            viewModel.refreshIfNeeded()
+        }
     }
 
     Scaffold(

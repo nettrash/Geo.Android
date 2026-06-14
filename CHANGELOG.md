@@ -1,0 +1,67 @@
+# Changelog — Geo.Android (Android + Wear)
+
+All notable changes to Geo.Android are documented here. Format loosely follows
+[Keep a Changelog](https://keepachangelog.com/). Entries are tagged with the
+Play `versionCode`; note that `versionCode` auto-increments on every
+assemble/bundle, so the value actually uploaded to Play may be higher than the
+one recorded here.
+
+## [1.1] — 2026-06-14 (versionCode 52)
+
+A correctness, accuracy and reliability release: a critical first-run fix, a
+hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus
+39 verified bug fixes and 24 improvements.
+
+### Fixed
+- **Critical:** on first launch, location/altitude/history did not start until
+  the app was killed and reopened — GPS now re-subscribes when the location
+  permission is granted.
+- **Crash:** the "Directions" buttons hard-crashed on devices without Google
+  Maps installed — now use a generic `geo:` intent wrapped in `runCatching`.
+- Background widget/history altitude ignored the fetched QNH and showed a
+  weather-biased value; QNH is now persisted (DataStore) and the worker derives
+  a calibrated altitude that matches the foreground app.
+- Wear: the tile ignored the phone calibration on live samples; Wear barometer
+  and calibration state are now persisted and restored across relaunches.
+- Wear → phone barometer backfill now works (the inbound listener was dead code),
+  so watch-captured history reaches the phone.
+- Home-screen widget: no-data state instead of authoritative `0 m / 0 kPa / 0,0`;
+  staleness cue for old data; reconfigure now preserves your toggle choices.
+- History DB no longer rebuilt with 4 full scans on every insert (dirty-flag +
+  single fetch); added a `recordDate` index (Room migration 1→2, non-destructive)
+  and a daily-rollover record.
+- Peak identity uses the full 128-bit coordinates (no 64-bit collisions);
+  Overpass coordinate quantisation uses round-half consistently.
+- Sensors pause when the app/Watch is backgrounded; `WearInboundListener`
+  throttle is now atomic; assorted AR/skyline fixes.
+
+### Added
+- Persistent, LRU-bounded on-device elevation cache (instant offline skyline).
+- History retention: automatic ~1-year prune plus a **Clear history** action.
+- One jittered retry/backoff + request spacing on the public APIs (respecting
+  `Retry-After`).
+- AR scene-warm-up gate with a "Scanning…" indicator (near markers no longer
+  flash in before the scene can occlude them), and 5 m location hysteresis to
+  stop AR marker jitter.
+- Map markers and date formatter are now hoisted (`remember`d) instead of
+  re-allocated per recomposition.
+
+### Changed
+- Altitude uses the international lapse-rate formula via a shared `Atmosphere`
+  helper; one precise Everest constant (8848.86 m); live pressure clamped to
+  300–1100 hPa.
+- Stat day-buckets anchored to today; altitude-graph padding unified.
+- The app is **English-only**.
+
+### Removed
+- Russian translation (`values-ru/`) and the empty `values-en-rGB/` — the app is
+  English-only.
+- Unused `WAKE_LOCK` permission from the Wear manifest.
+
+### Security
+- The Google Maps API key is no longer committed in `AndroidManifest.xml`; it is
+  injected from (git-ignored) `local.properties` via `manifestPlaceholders`.
+  **Action required:** rotate the previously-committed key in Google Cloud
+  Console and restrict the new key to the app package + signing SHA-1 + Maps SDK.
+
+[1.1]: https://github.com/nettrash/Geo.Android

@@ -20,4 +20,7 @@ interface HistoryDao {
 
     @Query("DELETE FROM history_items WHERE recordDate < :cutoff")
     suspend fun deleteOlderThan(cutoff: Long)
+
+    @Query("DELETE FROM history_items")
+    suspend fun deleteAll()
 }

@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,6 +56,29 @@ class ArOcclusionManager @Inject constructor() {
     private val _isOutdoor = MutableStateFlow(false)
     val isOutdoor: StateFlow<Boolean> = _isOutdoor.asStateFlow()
 
+    /**
+     * Whether the AR session has collected enough scene data for
+     * reliable occlusion. Starts false; becomes true once a vertical
+     * plane or a depth frame is available, or after a short warm-up
+     * timeout (see [sessionStarted]).
+     *
+     * `NatureScreen` uses this exactly like iOS `isSceneReady`: near
+     * markers (< `nearbyThreshold` m) are suppressed until it flips so
+     * they don't flash in before the scene can occlude them, and a
+     * "Scanning" indicator shows while it's false. Far markers are
+     * unaffected. Mirrors iOS `AROcclusionManager.isSceneReady`.
+     */
+    private val _isSceneReady = MutableStateFlow(false)
+    val isSceneReady: StateFlow<Boolean> = _isSceneReady.asStateFlow()
+
+    /** Warm-up fallback: even with no planes/depth (e.g. outdoors with
+     *  nothing nearby) the scene is treated as ready after this many
+     *  milliseconds so near markers aren't hidden forever. Mirrors the
+     *  iOS 3-second `sessionDidStart` fallback. */
+    private val sceneWarmupMs = 3_000L
+
+    private var warmupJob: Job? = null
+
     /** Marker beyond this many metres is never tested for occlusion
      *  — plane / depth data can't say anything useful about a peak
      *  30 km away. Mirrors iOS `maxOcclusionTargetDistance`. */
@@ -89,6 +113,23 @@ class ArOcclusionManager @Inject constructor() {
     }
 
     /**
+     * Call when an AR session starts (or restarts). Resets the
+     * scene-ready gate and schedules the warm-up fallback so near
+     * markers eventually appear even when ARCore detects no planes or
+     * depth. Mirrors iOS `AROcclusionManager.sessionDidStart`.
+     */
+    fun sessionStarted() {
+        warmupJob?.cancel()
+        _isSceneReady.value = false
+        warmupJob = scope.launch {
+            delay(sceneWarmupMs)
+            if (!_isSceneReady.value) {
+                _isSceneReady.value = true
+            }
+        }
+    }
+
+    /**
      * Recompute occlusion for the given [targets]. Coroutine-based
      * so the heavy math doesn't block the AR frame callback. New
      * calls cancel any in-flight one — we'd rather report stale data
@@ -104,6 +145,14 @@ class ArOcclusionManager @Inject constructor() {
         val depthSnapshot = controller.depthSnapshot.value
         val viewport = controller.viewportSize.value
         val outdoor = _isOutdoor.value
+
+        // Scene-ready signal: as soon as ARCore gives us a vertical
+        // plane or a depth frame, the scene can occlude near markers,
+        // so the warm-up gate can lift early. Mirrors iOS flipping
+        // `isSceneReady` on first mesh / vertical-plane detection.
+        if (!_isSceneReady.value && (planes.isNotEmpty() || depthSnapshot != null)) {
+            _isSceneReady.value = true
+        }
 
         if (cameraPos == null) {
             // Nothing to do until ARCore reports a camera pose.
@@ -172,6 +221,7 @@ class ArOcclusionManager @Inject constructor() {
      *  tears down so the scope doesn't outlive the host. */
     fun shutdown() {
         currentJob?.cancel()
+        warmupJob?.cancel()
         scope.cancel()
     }
 

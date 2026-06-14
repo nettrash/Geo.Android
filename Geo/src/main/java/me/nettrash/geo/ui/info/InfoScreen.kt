@@ -51,6 +51,8 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val highestDistance by viewModel.locationManager.highestMountainDistance.collectAsState()
 
     val context = LocalContext.current
+    val unitLat = stringResource(R.string.unit_latitude)
+    val unitLon = stringResource(R.string.unit_longitude)
 
     Box(
         modifier = modifier
@@ -105,8 +107,8 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         InfoCard(watermark = stringResource(R.string.section_satellite)) {
             InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
-                    MonoText("${String.format(Locale.US, "%.6f", location?.latitude ?: 0.0)} lt")
-                    MonoText("${String.format(Locale.US, "%.6f", location?.longitude ?: 0.0)} lg")
+                    MonoText("${String.format(Locale.US, "%.6f", location?.latitude ?: 0.0)} $unitLat")
+                    MonoText("${String.format(Locale.US, "%.6f", location?.longitude ?: 0.0)} $unitLon")
                 }
             }
             InfoRow(stringResource(R.string.field_altitude)) {
@@ -135,8 +137,8 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             }
             InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
-                    MonoText("${String.format(Locale.US, "%.6f", closestMountain?.coordinates?.latitude ?: 0.0)} lt")
-                    MonoText("${String.format(Locale.US, "%.6f", closestMountain?.coordinates?.longitude ?: 0.0)} lg")
+                    MonoText("${String.format(Locale.US, "%.6f", closestMountain?.coordinates?.latitude ?: 0.0)} $unitLat")
+                    MonoText("${String.format(Locale.US, "%.6f", closestMountain?.coordinates?.longitude ?: 0.0)} $unitLon")
                 }
             }
             Row(
@@ -149,11 +151,14 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                         closestMountain?.let { m ->
                             val lat = m.coordinates?.latitude ?: return@Button
                             val lon = m.coordinates.longitude ?: return@Button
-                            val uri = Uri.parse("google.navigation:q=$lat,$lon")
-                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                setPackage("com.google.android.apps.maps")
+                            // Generic geo: URI (no setPackage) so any
+                            // installed maps app can handle it — avoids
+                            // ActivityNotFoundException on devices without
+                            // Google Maps. Matches MapScreen's detail sheet.
+                            val uri = Uri.parse("geo:$lat,$lon?q=$lat,$lon(${m.name})")
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
                             }
-                            context.startActivity(intent)
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
@@ -181,8 +186,8 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             }
             InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
-                    MonoText("${String.format(Locale.US, "%.6f", highestMountain?.coordinates?.latitude ?: 0.0)} lt")
-                    MonoText("${String.format(Locale.US, "%.6f", highestMountain?.coordinates?.longitude ?: 0.0)} lg")
+                    MonoText("${String.format(Locale.US, "%.6f", highestMountain?.coordinates?.latitude ?: 0.0)} $unitLat")
+                    MonoText("${String.format(Locale.US, "%.6f", highestMountain?.coordinates?.longitude ?: 0.0)} $unitLon")
                 }
             }
             Row(
@@ -195,11 +200,14 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                         highestMountain?.let { m ->
                             val lat = m.coordinates?.latitude ?: return@Button
                             val lon = m.coordinates.longitude ?: return@Button
-                            val uri = Uri.parse("google.navigation:q=$lat,$lon")
-                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                setPackage("com.google.android.apps.maps")
+                            // Generic geo: URI (no setPackage) so any
+                            // installed maps app can handle it — avoids
+                            // ActivityNotFoundException on devices without
+                            // Google Maps. Matches MapScreen's detail sheet.
+                            val uri = Uri.parse("geo:$lat,$lon?q=$lat,$lon(${m.name})")
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
                             }
-                            context.startActivity(intent)
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),

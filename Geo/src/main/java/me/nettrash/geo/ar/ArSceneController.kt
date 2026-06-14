@@ -179,16 +179,18 @@ class ArSceneController {
         // ordering.
         // Centre hit-test — gives us the "wall distance" label in the
         // crosshair AND fuels the distance-source badge. Throttled to
-        // ~4 Hz and skipped entirely while no planes have been
-        // detected yet, both to cut native ARCore log noise (each
-        // call can trigger a "no point hit" warning) and to lighten
-        // per-frame CPU work. The label updates fast enough that 4
-        // Hz feels live.
+        // ~4 Hz (both to cut native ARCore log noise — each call can
+        // trigger a "no point hit" warning — and to lighten per-frame
+        // CPU work). We run it on every tracking frame rather than
+        // gating on a detected plane/depth frame: outdoors (the app's
+        // mountain use case) ARCore detects essentially no vertical
+        // planes and depth is disabled, so a plane/depth gate left the
+        // crosshair distance dead, a parity gap vs iOS which raycasts
+        // every frame. The hit-test itself reports whether it found a
+        // surface; we suppress the label only when it yields nothing.
+        // The label updates fast enough that 4 Hz feels live.
         val nowMs = System.currentTimeMillis()
-        val planeAvailable = _verticalPlanes.value.isNotEmpty()
-        val depthAvailable = _depthSnapshot.value != null
-        val ready = planeAvailable || depthAvailable
-        if (ready && nowMs - lastHitTestMs >= hitTestThrottleMs) {
+        if (nowMs - lastHitTestMs >= hitTestThrottleMs) {
             lastHitTestMs = nowMs
             try {
                 val centreX = viewportWidthPx / 2f
@@ -224,11 +226,6 @@ class ArSceneController {
                 _wallDistance.value = null
                 _distanceSource.value = null
             }
-        } else if (!ready) {
-            // Make sure the crosshair label clears while we're still
-            // waiting for the session to warm up.
-            if (_wallDistance.value != null) _wallDistance.value = null
-            if (_distanceSource.value != null) _distanceSource.value = null
         }
 
         // Snapshot vertical planes for the occlusion thread.

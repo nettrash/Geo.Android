@@ -69,6 +69,9 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     var showMountainSheet by remember { mutableStateOf(false) }
     var showHistorySheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState()
+    // Reuse one formatter for the history detail sheet instead of
+    // building a new SimpleDateFormat on every recomposition.
+    val historyDateFormat = remember { SimpleDateFormat("MMM d, yyyy HH:mm:ss", Locale.getDefault()) }
 
     val userLatLng = location?.let { LatLng(it.latitude, it.longitude) } ?: LatLng(0.0, 0.0)
     val cameraPositionState = rememberCameraPositionState {
@@ -111,6 +114,18 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 zoomControlsEnabled = true
             )
         ) {
+            // Hoist the per-pin BitmapDescriptors and the marker date
+            // formatter so dozens of markers reuse one instance each
+            // instead of reallocating on every recomposition. These
+            // remembers live inside the GoogleMap content scope so they
+            // run after the Maps SDK is initialised, which
+            // BitmapDescriptorFactory requires. (iOS hoists these too.)
+            val pinTopSeven = remember { BitmapDescriptorFactory.fromResource(R.drawable.pin_top_seven) }
+            val pinTopPeaks = remember { BitmapDescriptorFactory.fromResource(R.drawable.pin_top_peaks) }
+            val pinSnowLeopard = remember { BitmapDescriptorFactory.fromResource(R.drawable.pin_snow_leopard) }
+            val pinHistoryPoint = remember { BitmapDescriptorFactory.fromResource(R.drawable.pin_history_point) }
+            val markerDateFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
+
             // Seven Peaks markers (orange)
             mountainsData?.sevenPeaks?.mountains?.forEach { mountain ->
                 val lat = mountain.coordinates?.latitude ?: return@forEach
@@ -119,7 +134,7 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     state = MarkerState(position = LatLng(lat, lon)),
                     title = mountain.name ?: "Unknown",
                     snippet = "${mountain.height ?: 0} m",
-                    icon = BitmapDescriptorFactory.fromResource(R.drawable.pin_top_seven),
+                    icon = pinTopSeven,
                     onClick = {
                         selectedMountain = mountain
                         showMountainSheet = true
@@ -137,7 +152,7 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     state = MarkerState(position = LatLng(lat, lon)),
                     title = mountain.name ?: "Unknown",
                     snippet = "${mountain.height ?: 0} m",
-                    icon = BitmapDescriptorFactory.fromResource(R.drawable.pin_top_peaks),
+                    icon = pinTopPeaks,
                     onClick = {
                         selectedMountain = mountain
                         showMountainSheet = true
@@ -155,7 +170,7 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     state = MarkerState(position = LatLng(lat, lon)),
                     title = mountain.name ?: "Unknown",
                     snippet = "${mountain.height ?: 0} m",
-                    icon = BitmapDescriptorFactory.fromResource(R.drawable.pin_snow_leopard),
+                    icon = pinSnowLeopard,
                     onClick = {
                         selectedMountain = mountain
                         showMountainSheet = true
@@ -168,9 +183,9 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             historyItems.takeLast(25).forEach { item ->
                 Marker(
                     state = MarkerState(position = LatLng(item.gpsLatitude, item.gpsLongitude)),
-                    title = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(item.recordDate)),
+                    title = markerDateFormat.format(Date(item.recordDate)),
                     snippet = "Alt: ${String.format(Locale.US, "%.0f", item.gpsAltitude)} m",
-                    icon = BitmapDescriptorFactory.fromResource(R.drawable.pin_history_point),
+                    icon = pinHistoryPoint,
                     onClick = {
                         selectedHistoryDate = item.recordDate
                         showHistorySheet = true
@@ -254,7 +269,7 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     containerColor = Color(0xFF1A1A1A)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        val dateStr = SimpleDateFormat("MMM d, yyyy HH:mm:ss", Locale.getDefault()).format(Date(item.recordDate))
+                        val dateStr = historyDateFormat.format(Date(item.recordDate))
                         Text(dateStr, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         Spacer(Modifier.height(8.dp))
                         val pressureLabel = stringResource(R.string.field_pressure)

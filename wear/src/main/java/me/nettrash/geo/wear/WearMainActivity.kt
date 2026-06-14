@@ -23,7 +23,6 @@ class WearMainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        barometer.start()
         setContent {
             val pressure by barometer.pressure.collectAsState()
             val altitude by barometer.altitude.collectAsState()
@@ -47,8 +46,18 @@ class WearMainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
+    // Sample only while the UI is actually visible. Tying start/stop
+    // to onStart/onStop (rather than onCreate/onDestroy) pauses the
+    // pressure sensor when the activity is merely stopped — screen off
+    // or wrist down — instead of leaving it registered for the whole
+    // process lifetime, which needlessly drains a wearable battery.
+    override fun onStart() {
+        super.onStart()
+        barometer.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
         barometer.stop()
     }
 }

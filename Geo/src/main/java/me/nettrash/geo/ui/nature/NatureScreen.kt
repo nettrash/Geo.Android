@@ -131,6 +131,20 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val historyPoints by viewModel.arHistoryPoints.collectAsState()
     val heading by viewModel.motionManager.heading.collectAsState()
 
+    // Overlay anchor with 5 m hysteresis: the marker/horizon
+    // projection is fed THIS rather than the raw `location` so GPS
+    // jitter doesn't make markers twitch. Only updated when a new fix
+    // is at least 5 m from the current anchor. Mirrors iOS
+    // `refreshOverlayLocationIfNeeded`.
+    var overlayLocation by remember { mutableStateOf(location) }
+    LaunchedEffect(location) {
+        val newLoc = location ?: return@LaunchedEffect
+        val current = overlayLocation
+        if (current == null || newLoc.distanceTo(current) >= 5f) {
+            overlayLocation = newLoc
+        }
+    }
+
     var arAvailable by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         arAvailable = try {
@@ -168,6 +182,11 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     // each tick from GPS accuracy + distant-peak count.
     LaunchedEffect(isARActive) {
         if (!isARActive) return@LaunchedEffect
+        // Reset the scene-ready gate for this fresh session and arm
+        // the warm-up fallback. Mirrors iOS `sessionDidStart`. The
+        // occlusion manager is a singleton, so without this the flag
+        // would stay stuck at its previous value across sessions.
+        viewModel.occlusionManager.sessionStarted()
         while (true) {
             val loc = viewModel.locationManager.location.value
             val currentPeaks = viewModel.peaks.value
@@ -228,6 +247,9 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         onDispose {
             viewModel.motionManager.stop()
             controller.markUntracked()
+            // Stop any in-flight skyline computation so Open-Elevation
+            // batches don't keep running after the AR view tears down.
+            viewModel.skylineCalculator.cancel()
         }
     }
 
@@ -248,7 +270,7 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             !arAvailable -> ArUnavailableScreen()
             else -> ArScene(
                 controller = controller,
-                location = location,
+                location = overlayLocation,
                 peaks = peaks,
                 historyPoints = historyPoints,
                 heading = heading,
@@ -278,6 +300,7 @@ private fun ArScene(
     val barometerHeight by viewModel.barometerManager.height.collectAsState()
     val occludedIds by viewModel.occlusionManager.occludedIds.collectAsState()
     val isDepthSupported by controller.isDepthSupported.collectAsState()
+    val isSceneReady by viewModel.occlusionManager.isSceneReady.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { /* viewport handled via AndroidView */ }) {
@@ -351,11 +374,22 @@ private fun ArScene(
         // to the simpler bearing-window overlay used previously so
         // we still show *something* before the AR session warms up.
         if (location != null && isTracking && viewportSize != null) {
+            // Suppress near markers (< NEARBY_THRESHOLD_M) until the
+            // scene is ready, so they don't flash in before they can
+            // be occluded by detected geometry. Far markers always
+            // show. Mirrors iOS `PeakOverlayView` gating on
+            // `distance >= nearbyThreshold || isSceneReady`.
             ProjectedOverlay(
                 controller = controller,
                 userLocation = location,
-                peaks = peaks.filterNot { it.id in occludedIds },
-                historyPoints = historyPoints.filterNot { it.id in occludedIds }
+                peaks = peaks.filterNot {
+                    it.id in occludedIds ||
+                        (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
+                },
+                historyPoints = historyPoints.filterNot {
+                    it.id in occludedIds ||
+                        (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
+                }
             )
         } else {
             BearingWindowOverlay(
@@ -407,11 +441,19 @@ private fun ArScene(
         ) {
             // Counters reflect what's *actually drawn* in
             // ProjectedOverlay, i.e. peaks/history minus anything
-            // ArOcclusionManager says is behind real geometry.
+            // ArOcclusionManager says is behind real geometry AND
+            // minus near markers suppressed during scene warm-up.
             // Showing the raw collection sizes here would lie about
-            // what the user can see on screen.
-            val visiblePeaks = peaks.count { it.id !in occludedIds }
-            val visibleHistory = historyPoints.count { it.id !in occludedIds }
+            // what the user can see on screen. Mirrors iOS
+            // `visibleHistoryPoints`.
+            val visiblePeaks = peaks.count {
+                it.id !in occludedIds &&
+                    (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
+            }
+            val visibleHistory = historyPoints.count {
+                it.id !in occludedIds &&
+                    (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
+            }
 
             Icon(Icons.Default.Terrain, null, tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
@@ -422,7 +464,12 @@ private fun ArScene(
             Spacer(Modifier.width(4.dp))
             Text("$visibleHistory", color = Color.White, fontSize = 14.sp)
 
-            if (!isTracking) {
+            // "Scanning" while the AR camera isn't tracking yet OR the
+            // scene-ready warm-up gate (Improvement #20) hasn't lifted.
+            // The latter is the window during which near markers are
+            // suppressed, so surfacing it explains the missing markers.
+            // Mirrors iOS showing "Scanning" whenever `!isSceneReady`.
+            if (!isTracking || !isSceneReady) {
                 Spacer(Modifier.width(12.dp))
                 Text(
                     stringResource(R.string.ar_status_scanning),
@@ -784,6 +831,14 @@ private fun ArUnavailableScreen() {
 }
 
 private const val KEY_CAMERA_REQUESTED = "camera_requested"
+
+/**
+ * Markers closer than this (metres) are hidden until the AR scene is
+ * ready (see `ArOcclusionManager.isSceneReady`), so near markers don't
+ * flash in before they can be occluded by detected geometry. Markers
+ * farther than this always show. Mirrors iOS `nearbyThreshold = 100`.
+ */
+private const val NEARBY_THRESHOLD_M = 100.0
 
 /**
  * Feature flag for ARCore Depth API. Off by default — see the
