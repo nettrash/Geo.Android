@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.nettrash.geo.data.db.HistoryItem
+import me.nettrash.geo.data.db.Trip
 import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.DataItem
 import me.nettrash.geo.data.model.DataPoint
@@ -31,6 +32,7 @@ import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.MountainLoader
 import me.nettrash.geo.util.PeakFinder
+import me.nettrash.geo.util.TripRecordingStore
 import me.nettrash.geo.widget.WidgetUpdater
 import java.util.Date
 import javax.inject.Inject
@@ -97,6 +99,14 @@ class GeoViewModel @Inject constructor(
      *  .BarometerRefreshWorker]. */
     private val _pressureTrend = MutableStateFlow(PressureTrend.UNKNOWN)
     val pressureTrend: StateFlow<PressureTrend> = _pressureTrend.asStateFlow()
+
+    // Trip Recorder (M5c)
+    private val tripStore = TripRecordingStore(appContext)
+    /** Epoch-ms the current recording started, or null when not recording. */
+    private val _tripStartedAt = MutableStateFlow(tripStore.startedAtMs())
+    val tripStartedAt: StateFlow<Long?> = _tripStartedAt.asStateFlow()
+    private val _trips = MutableStateFlow<List<Trip>>(emptyList())
+    val trips: StateFlow<List<Trip>> = _trips.asStateFlow()
 
     // Peaks for AR
     private val _peaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
@@ -273,6 +283,51 @@ class GeoViewModel @Inject constructor(
             refreshHistory()
         }
     }
+
+    // ── Trip Recorder (M5c) ──────────────────────────────────────
+
+    val isRecordingTrip: Boolean get() = _tripStartedAt.value != null
+
+    fun loadTrips() {
+        viewModelScope.launch { _trips.value = historyRepository.getTrips() }
+    }
+
+    fun startTrip() {
+        val now = System.currentTimeMillis()
+        tripStore.setStartedAtMs(now)
+        _tripStartedAt.value = now
+    }
+
+    /** Stop + save the in-progress recording under [name], then reload the list. */
+    fun stopTrip(name: String) {
+        val start = _tripStartedAt.value ?: return
+        val end = System.currentTimeMillis()
+        // Clear the recording state synchronously (before the async save) so the
+        // start can't be re-consumed — closes the double-save and
+        // discard-after-save windows. Mirrors iOS's synchronous stop().
+        tripStore.clear()
+        _tripStartedAt.value = null
+        viewModelScope.launch {
+            historyRepository.saveTrip(name, start, end)
+            _trips.value = historyRepository.getTrips()
+        }
+    }
+
+    /** Abandon the in-progress recording without saving. */
+    fun cancelTrip() {
+        tripStore.clear()
+        _tripStartedAt.value = null
+    }
+
+    fun deleteTrip(trip: Trip) {
+        viewModelScope.launch {
+            historyRepository.deleteTrip(trip)
+            _trips.value = historyRepository.getTrips()
+        }
+    }
+
+    suspend fun tripElevationProfile(trip: Trip): List<Double> =
+        historyRepository.tripElevationProfile(trip.startDate, trip.endDate)
 
     private fun recordHistory(location: Location) {
         viewModelScope.launch {
