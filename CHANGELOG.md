@@ -36,6 +36,12 @@ hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus
   throttle is now atomic; assorted AR/skyline fixes.
 
 ### Added
+- **Peak bearing & compass arrow** — the closest- and highest-mountain cards now
+  show the true bearing to the peak ("117° SE") with an arrow that rotates to your
+  live heading, so it always points at the summit — a low-power, AR-free
+  "point me toward it" finder. The magnetic compass azimuth is corrected to true
+  north via the local magnetic declination. Includes a "calibrate compass" hint
+  when the magnetometer drifts; the compass runs only while the Info tab is open.
 - **Sun panel** — today's solar windows for your exact position **and altitude**:
   dawn, sunrise, golden hour (AM/PM), solar noon, sunset, dusk and day length, with
   a live "X h to sunset" countdown (rolling on to tomorrow's sunrise after dark).

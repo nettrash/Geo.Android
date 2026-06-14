@@ -59,6 +59,10 @@
     <string name="solar_waiting">Waiting for location…</string>
     <string name="solar_sun_up">Sun up all day</string>
     <string name="solar_polar_night">Polar night</string>
+
+    <!-- Peak bearing / compass arrow -->
+    <string name="field_bearing">Bearing</string>
+    <string name="compass_calibrate">Calibrate compass — move in a figure-8</string>
     <string name="field_country">Country</string>
     <string name="field_location">Location</string>
     <string name="field_first_ascent">First Ascent</string>

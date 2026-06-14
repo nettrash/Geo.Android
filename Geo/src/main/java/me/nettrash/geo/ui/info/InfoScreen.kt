@@ -1,9 +1,12 @@
 package me.nettrash.geo.ui.info
 
 import android.content.Intent
+import android.hardware.GeomagneticField
+import android.hardware.SensorManager
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,13 +15,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,13 +48,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nettrash.geo.sensor.DeviceMotionManager
 import me.nettrash.geo.sensor.PressureTrendClass
 import me.nettrash.geo.ui.GeoViewModel
+import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.Solar
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
@@ -57,6 +69,13 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
     // Recompute the de-trended trend chip when the Info tab is shown.
     LaunchedEffect(Unit) { viewModel.refreshIfNeeded() }
+
+    // Run the compass only while the Info tab is visible (low-power, AR-free
+    // peak direction finder). start()/stop() are idempotent.
+    DisposableEffect(Unit) {
+        viewModel.motionManager.start()
+        onDispose { viewModel.motionManager.stop() }
+    }
     val location by viewModel.locationManager.location.collectAsState()
     val closestMountain by viewModel.locationManager.closestMountain.collectAsState()
     val closestDistance by viewModel.locationManager.closestMountainDistance.collectAsState()
@@ -163,6 +182,13 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             InfoRow(stringResource(R.string.field_distance)) {
                 MonoText("${String.format(Locale.US, "%.2f", (closestDistance ?: 0.0) / 1000.0)} km")
             }
+            PeakBearingRow(
+                userLat = location?.latitude, userLon = location?.longitude,
+                userAlt = location?.altitude ?: 0.0,
+                peakLat = closestMountain?.coordinates?.latitude,
+                peakLon = closestMountain?.coordinates?.longitude,
+                motionManager = viewModel.motionManager
+            )
             InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.6f", closestMountain?.coordinates?.latitude ?: 0.0)} $unitLat")
@@ -212,6 +238,13 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             InfoRow(stringResource(R.string.field_distance)) {
                 MonoText("${String.format(Locale.US, "%.2f", (highestDistance ?: 0.0) / 1000.0)} km")
             }
+            PeakBearingRow(
+                userLat = location?.latitude, userLon = location?.longitude,
+                userAlt = location?.altitude ?: 0.0,
+                peakLat = highestMountain?.coordinates?.latitude,
+                peakLon = highestMountain?.coordinates?.longitude,
+                motionManager = viewModel.motionManager
+            )
             InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.6f", highestMountain?.coordinates?.latitude ?: 0.0)} $unitLat")
@@ -423,4 +456,64 @@ private fun durationOrDash(ms: Long?): String {
     if (ms == null || ms <= 0) return "—"
     val total = ms / 1000L
     return "${total / 3600}h ${(total % 3600) / 60}m"
+}
+
+/**
+ * Distance-paired "point me toward it" row: a true-bearing readout
+ * ("117° SE") plus an arrow that rotates to the device's live heading so it
+ * always points at the peak. A low-power, AR-free direction finder.
+ * Mirrors iOS `PeakBearingRow`.
+ *
+ * The rotation-vector sensor reports a MAGNETIC azimuth, so it's converted
+ * to a true heading via the local magnetic declination before being paired
+ * with the (true) bearing — iOS already gets `CLHeading.trueHeading`.
+ * Renders nothing until both observer and peak coordinates are known.
+ */
+@Composable
+private fun PeakBearingRow(
+    userLat: Double?, userLon: Double?, userAlt: Double,
+    peakLat: Double?, peakLon: Double?,
+    motionManager: DeviceMotionManager
+) {
+    val valid = userLat != null && userLon != null && peakLat != null && peakLon != null &&
+        !(userLat == 0.0 && userLon == 0.0) && !(peakLat == 0.0 && peakLon == 0.0)
+    if (!valid) return
+
+    val heading by motionManager.heading.collectAsState()
+    val accuracy by motionManager.headingAccuracy.collectAsState()
+
+    val bearing = GeoCalculations.bearing(userLat!!, userLon!!, peakLat!!, peakLon!!)
+    val declination = remember(userLat, userLon) {
+        GeomagneticField(userLat.toFloat(), userLon.toFloat(), userAlt.toFloat(), System.currentTimeMillis()).declination
+    }
+    val trueHeading = (((heading + declination) % 360) + 360) % 360
+    val rotation = (bearing - trueHeading).toFloat()
+
+    InfoRow(stringResource(R.string.field_bearing)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Navigation glyph points up; rotating by (bearing − heading) aims
+            // it at the peak's real-world direction relative to the device.
+            Icon(
+                imageVector = Icons.Filled.Navigation,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(16.dp).rotate(rotation)
+            )
+            Spacer(Modifier.width(6.dp))
+            MonoText("${bearing.roundToInt()}° ${GeoCalculations.cardinalDirection(bearing)}")
+        }
+    }
+    if (accuracy <= SensorManager.SENSOR_STATUS_ACCURACY_LOW) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Text(
+                text = stringResource(R.string.compass_calibrate),
+                color = Color(0xFFFFC107),
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
 }

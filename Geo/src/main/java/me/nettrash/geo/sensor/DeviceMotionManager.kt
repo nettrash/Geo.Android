@@ -29,17 +29,30 @@ class DeviceMotionManager @Inject constructor(
     private val _roll = MutableStateFlow(0f)
     val roll: StateFlow<Float> = _roll.asStateFlow()
 
+    /** Rotation-vector accuracy as a `SensorManager.SENSOR_STATUS_ACCURACY_*`
+     *  value. Starts optimistic (HIGH) so the "calibrate" hint isn't shown
+     *  before the first accuracy callback; drops to LOW/UNRELIABLE when the
+     *  magnetometer drifts. Drives the compass-calibration hint. */
+    private val _headingAccuracy = MutableStateFlow(SensorManager.SENSOR_STATUS_ACCURACY_HIGH)
+    val headingAccuracy: StateFlow<Int> = _headingAccuracy.asStateFlow()
+
     private val rotationMatrix = FloatArray(9)
     private val orientationValues = FloatArray(3)
 
+    private var isStarted = false
+
     fun start() {
+        if (isStarted) return
         rotationSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            isStarted = true
         }
     }
 
     fun stop() {
+        if (!isStarted) return
         sensorManager.unregisterListener(this)
+        isStarted = false
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -57,5 +70,9 @@ class DeviceMotionManager @Inject constructor(
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        if (sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
+            _headingAccuracy.value = accuracy
+        }
+    }
 }
