@@ -308,8 +308,16 @@ class GeoViewModel @Inject constructor(
         tripStore.clear()
         _tripStartedAt.value = null
         viewModelScope.launch {
-            historyRepository.saveTrip(name, start, end)
-            _trips.value = historyRepository.getTrips()
+            try {
+                historyRepository.saveTrip(name, start, end)
+                _trips.value = historyRepository.getTrips()
+            } catch (t: Throwable) {
+                // Save failed — restore the in-progress recording so the user
+                // can retry rather than lose it.
+                AppLog.app.warn("Trip save failed; restoring recording state", t)
+                tripStore.setStartedAtMs(start)
+                _tripStartedAt.value = start
+            }
         }
     }
 

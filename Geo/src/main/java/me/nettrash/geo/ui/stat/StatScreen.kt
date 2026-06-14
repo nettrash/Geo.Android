@@ -229,9 +229,10 @@ private fun TripsSection(viewModel: GeoViewModel) {
     var showNameDialog by remember { mutableStateOf(false) }
     var tripName by remember { mutableStateOf("") }
     var detailTrip by remember { mutableStateOf<Trip?>(null) }
+    val tripPrefix = stringResource(R.string.trip_default_name_prefix)
 
     Text(
-        "TRIPS",
+        stringResource(R.string.section_trips),
         fontSize = 24.sp,
         fontWeight = FontWeight.Bold,
         color = Color.White,
@@ -248,33 +249,33 @@ private fun TripsSection(viewModel: GeoViewModel) {
             }
         }
         Text(
-            "● Recording — ${formatDuration((now - start) / 1000.0)}",
+            stringResource(R.string.trip_recording_format, formatDuration((now - start) / 1000.0)),
             color = Color(0xFFFF3B30),
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(4.dp)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(4.dp)) {
             Button(
-                onClick = { tripName = defaultTripName(start); showNameDialog = true },
+                onClick = { tripName = defaultTripName(tripPrefix, start); showNameDialog = true },
                 shape = RoundedCornerShape(8.dp)
-            ) { Text("Stop & Save", color = Color.White) }
+            ) { Text(stringResource(R.string.trip_stop_save), color = Color.White) }
             Button(
                 onClick = { viewModel.cancelTrip() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
                 shape = RoundedCornerShape(8.dp)
-            ) { Text("Discard", color = Color.White) }
+            ) { Text(stringResource(R.string.trip_discard), color = Color.White) }
         }
     } else {
         Button(
             onClick = { viewModel.startTrip() },
             shape = RoundedCornerShape(8.dp),
             modifier = Modifier.padding(4.dp)
-        ) { Text("Start trip", color = Color.White) }
+        ) { Text(stringResource(R.string.trip_start), color = Color.White) }
     }
 
     if (trips.isEmpty()) {
         Text(
-            "No trips yet — tap Start to record an outing.",
+            stringResource(R.string.trip_empty),
             color = Color.Gray,
             fontSize = 12.sp,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -286,16 +287,20 @@ private fun TripsSection(viewModel: GeoViewModel) {
     if (showNameDialog) {
         AlertDialog(
             onDismissRequest = { showNameDialog = false },
-            title = { Text("Name this trip") },
+            title = { Text(stringResource(R.string.trip_name_dialog_title)) },
             text = {
                 OutlinedTextField(value = tripName, onValueChange = { tripName = it }, singleLine = true)
             },
             confirmButton = {
                 TextButton(onClick = {
                     showNameDialog = false
-                    val name = tripName.trim().ifEmpty { defaultTripName(System.currentTimeMillis()) }
+                    // Fall back to a name based on the recording START time (still
+                    // set here, before stopTrip), matching the prefilled default.
+                    val name = tripName.trim().ifEmpty {
+                        defaultTripName(tripPrefix, startedAt ?: System.currentTimeMillis())
+                    }
                     viewModel.stopTrip(name)
-                }) { Text("Save") }
+                }) { Text(stringResource(R.string.action_save)) }
             },
             dismissButton = {
                 TextButton(onClick = { showNameDialog = false }) {
@@ -358,17 +363,17 @@ private fun TripDetailDialog(
                     ElevationProfileCanvas(profile)
                     Spacer(Modifier.height(8.dp))
                 }
-                tripStatRow("Ascent", "↑ ${trip.totalAscent.roundToInt()} m")
-                tripStatRow("Descent", "↓ ${trip.totalDescent.roundToInt()} m")
-                tripStatRow("Max altitude", "${trip.maxAltitude.roundToInt()} m")
-                tripStatRow("Min altitude", "${trip.minAltitude.roundToInt()} m")
-                tripStatRow("Distance", formatKm(trip.distance))
-                tripStatRow("Moving time", formatDuration(trip.movingTime))
-                tripStatRow("Total time", formatDuration((trip.endDate - trip.startDate) / 1000.0))
+                tripStatRow(stringResource(R.string.trip_field_ascent), "↑ ${trip.totalAscent.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_descent), "↓ ${trip.totalDescent.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_max_altitude), "${trip.maxAltitude.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_min_altitude), "${trip.minAltitude.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_distance), formatKm(trip.distance))
+                tripStatRow(stringResource(R.string.trip_field_moving_time), formatDuration(trip.movingTime))
+                tripStatRow(stringResource(R.string.trip_field_total_time), formatDuration((trip.endDate - trip.startDate) / 1000.0))
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        dismissButton = { TextButton(onClick = onDelete) { Text("Delete", color = Color(0xFFFF3B30)) } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) } },
+        dismissButton = { TextButton(onClick = onDelete) { Text(stringResource(R.string.action_delete), color = Color(0xFFFF3B30)) } }
     )
 }
 
@@ -420,8 +425,12 @@ private fun formatDuration(seconds: Double): String {
     }
 }
 
-private fun formatStamp(ms: Long): String =
-    SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(ms))
+// Cached formatters — these are called per list item / per recomposition, so
+// reuse a single instance instead of allocating one each call (the codebase
+// does the same in MapScreen). Main-thread-only use, so sharing is safe.
+private val tripStampFormat = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
+private val tripDayFormat = SimpleDateFormat("MMM d", Locale.getDefault())
 
-private fun defaultTripName(ms: Long): String =
-    "Trip ${SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(ms))}"
+private fun formatStamp(ms: Long): String = tripStampFormat.format(Date(ms))
+
+private fun defaultTripName(prefix: String, ms: Long): String = "$prefix ${tripDayFormat.format(Date(ms))}"

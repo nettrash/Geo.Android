@@ -80,8 +80,9 @@ class HistoryRepository @Inject constructor(
     /** Barometric-altitude elevation profile for `[start, end]`, downsampled
      *  to at most [maxPoints] points for charting. */
     suspend fun tripElevationProfile(start: Long, end: Long, maxPoints: Int = 120): List<Double> {
+        if (maxPoints <= 0) return emptyList()   // "at most maxPoints" — 0 means none
         val altitudes = getItemsBetween(start, end).map { it.barometerAltitude }
-        if (altitudes.size <= maxPoints || maxPoints <= 0) return altitudes
+        if (altitudes.size <= maxPoints) return altitudes
         val stride = altitudes.size.toDouble() / maxPoints
         return (0 until maxPoints).map { altitudes[(it * stride).toInt()] }
     }
