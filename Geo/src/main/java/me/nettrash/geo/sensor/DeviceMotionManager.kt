@@ -44,8 +44,9 @@ class DeviceMotionManager @Inject constructor(
     fun start() {
         if (isStarted) return
         rotationSensor?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-            isStarted = true
+            // Track the actual registration result: if it fails, leave
+            // isStarted false so a later start() can retry.
+            isStarted = sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
     }
 

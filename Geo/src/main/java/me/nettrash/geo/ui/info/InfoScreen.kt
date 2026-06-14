@@ -482,9 +482,14 @@ private fun PeakBearingRow(
     val heading by motionManager.heading.collectAsState()
     val accuracy by motionManager.headingAccuracy.collectAsState()
 
-    val bearing = GeoCalculations.bearing(userLat!!, userLon!!, peakLat!!, peakLon!!)
-    val declination = remember(userLat, userLon) {
-        GeomagneticField(userLat.toFloat(), userLon.toFloat(), userAlt.toFloat(), System.currentTimeMillis()).declination
+    // Memoize the coordinate-only trig so it isn't recomputed every
+    // (heading-rate) recomposition; key declination on altitude too so the
+    // cached value can't go stale when altitude updates.
+    val bearing = remember(userLat, userLon, peakLat, peakLon) {
+        GeoCalculations.bearing(userLat!!, userLon!!, peakLat!!, peakLon!!)
+    }
+    val declination = remember(userLat, userLon, userAlt) {
+        GeomagneticField(userLat!!.toFloat(), userLon!!.toFloat(), userAlt.toFloat(), System.currentTimeMillis()).declination
     }
     val trueHeading = (((heading + declination) % 360) + 360) % 360
     val rotation = (bearing - trueHeading).toFloat()
@@ -500,7 +505,7 @@ private fun PeakBearingRow(
                 modifier = Modifier.size(16.dp).rotate(rotation)
             )
             Spacer(Modifier.width(6.dp))
-            MonoText("${bearing.roundToInt()}° ${GeoCalculations.cardinalDirection(bearing)}")
+            MonoText("${bearing.roundToInt() % 360}° ${GeoCalculations.cardinalDirection(bearing)}")
         }
     }
     if (accuracy <= SensorManager.SENSOR_STATUS_ACCURACY_LOW) {

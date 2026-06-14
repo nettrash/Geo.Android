@@ -147,14 +147,17 @@ object GeoCalculations {
      * bearing in degrees from true north. Kept identical to iOS
      * `Geometry.cardinalDirection`.
      */
+    /** 8-point compass labels, hoisted so [cardinalDirection] doesn't
+     *  re-allocate the array on every (per-heading-update) call. */
+    private val CARDINAL_LABELS = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
     fun cardinalDirection(bearingDeg: Double): String {
         // Guard non-finite input explicitly so behaviour is defined and
         // identical to iOS (which would otherwise trap on Int(NaN)).
         if (!bearingDeg.isFinite()) return "N"
-        val dirs = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
         val normalized = bearingDeg % 360
         val positive = (normalized + 360) % 360
         val index = ((positive + 22.5) % 360 / 45).toInt()
-        return dirs[index % 8]
+        return CARDINAL_LABELS[index % 8]
     }
 }
