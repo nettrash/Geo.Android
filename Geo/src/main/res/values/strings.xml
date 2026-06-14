@@ -39,7 +39,7 @@
     <string name="field_velocity">Velocity</string>
     <string name="field_geography">Geography</string>
     <string name="field_mountain">Mountain</string>
-    <string name="field_percent_everest">% Everest</string>
+    <string name="field_percent_everest" formatted="false">% Everest</string>
     <string name="field_calibrating">calibrating…</string>
     <string name="field_height">Height</string>
     <string name="field_region">Region</string>

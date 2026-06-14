@@ -1,0 +1,70 @@
+name: Android CI
+
+# Build, lint and test the Geo Android + Wear app on every push / PR.
+# (Release-to-Play lives in release.yml, triggered by `v*` tags.)
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (debug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-gradle@v4
+      # -PnoBump keeps CI from mutating the tracked version.properties on the runner.
+      - name: Assemble debug (phone + wear)
+        run: ./gradlew :Geo:assembleDebug :wear:assembleDebug --no-daemon -PnoBump
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-gradle@v4
+      - name: Android Lint (phone + wear)
+        run: ./gradlew :Geo:lintDebug :wear:lintDebug --no-daemon -PnoBump
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: '**/build/reports/lint-results-*.html'
+          if-no-files-found: ignore
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-gradle@v4
+      - name: Unit tests (phone + wear)
+        run: ./gradlew :Geo:testDebugUnitTest :wear:testDebugUnitTest --no-daemon -PnoBump
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/**'
+          if-no-files-found: ignore
