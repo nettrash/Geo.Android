@@ -1,11 +1,16 @@
 package me.nettrash.geo.ui.stat
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -14,17 +19,23 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -32,10 +43,16 @@ import androidx.compose.ui.text.font.FontWeight
 import me.nettrash.geo.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import me.nettrash.geo.data.db.Trip
 import me.nettrash.geo.data.model.GraphLine
 import me.nettrash.geo.ui.GeoViewModel
 import me.nettrash.geo.ui.components.GeoGraphPointsView
 import me.nettrash.geo.ui.components.GeoGraphView
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
@@ -155,6 +172,8 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             measurement = "m"
         )
 
+        TripsSection(viewModel)
+
         Spacer(modifier = Modifier.height(16.dp))
 
         Button(
@@ -197,3 +216,221 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
     } // Box
 }
+
+// MARK: - Trip Recorder UI (M5c)
+
+/** One-tap record control + saved-trip list. Mirrors iOS `TripsSectionView`. */
+@Composable
+private fun TripsSection(viewModel: GeoViewModel) {
+    val startedAt by viewModel.tripStartedAt.collectAsState()
+    val trips by viewModel.trips.collectAsState()
+    LaunchedEffect(Unit) { viewModel.loadTrips() }
+
+    var showNameDialog by remember { mutableStateOf(false) }
+    var tripName by remember { mutableStateOf("") }
+    var detailTrip by remember { mutableStateOf<Trip?>(null) }
+    val tripPrefix = stringResource(R.string.trip_default_name_prefix)
+
+    Text(
+        stringResource(R.string.section_trips),
+        fontSize = 24.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color.White,
+        modifier = Modifier.padding(16.dp)
+    )
+
+    val start = startedAt
+    if (start != null) {
+        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(start) {
+            while (true) {
+                now = System.currentTimeMillis()
+                delay(1000)
+            }
+        }
+        Text(
+            stringResource(R.string.trip_recording_format, formatDuration((now - start) / 1000.0)),
+            color = Color(0xFFFF3B30),
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(4.dp)
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(4.dp)) {
+            Button(
+                onClick = { tripName = defaultTripName(tripPrefix, start); showNameDialog = true },
+                shape = RoundedCornerShape(8.dp)
+            ) { Text(stringResource(R.string.trip_stop_save), color = Color.White) }
+            Button(
+                onClick = { viewModel.cancelTrip() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                shape = RoundedCornerShape(8.dp)
+            ) { Text(stringResource(R.string.trip_discard), color = Color.White) }
+        }
+    } else {
+        Button(
+            onClick = { viewModel.startTrip() },
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.padding(4.dp)
+        ) { Text(stringResource(R.string.trip_start), color = Color.White) }
+    }
+
+    if (trips.isEmpty()) {
+        Text(
+            stringResource(R.string.trip_empty),
+            color = Color.Gray,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+    } else {
+        trips.forEach { trip -> TripCard(trip) { detailTrip = trip } }
+    }
+
+    if (showNameDialog) {
+        AlertDialog(
+            onDismissRequest = { showNameDialog = false },
+            title = { Text(stringResource(R.string.trip_name_dialog_title)) },
+            text = {
+                OutlinedTextField(value = tripName, onValueChange = { tripName = it }, singleLine = true)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showNameDialog = false
+                    // Fall back to a name based on the recording START time (still
+                    // set here, before stopTrip), matching the prefilled default.
+                    val name = tripName.trim().ifEmpty {
+                        defaultTripName(tripPrefix, startedAt ?: System.currentTimeMillis())
+                    }
+                    viewModel.stopTrip(name)
+                }) { Text(stringResource(R.string.action_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNameDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    detailTrip?.let { trip ->
+        TripDetailDialog(
+            trip = trip,
+            viewModel = viewModel,
+            onDelete = { viewModel.deleteTrip(trip); detailTrip = null },
+            onDismiss = { detailTrip = null }
+        )
+    }
+}
+
+@Composable
+private fun TripCard(trip: Trip, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(trip.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(formatStamp(trip.startDate), color = Color.Gray, fontSize = 11.sp)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text("↑ ${trip.totalAscent.roundToInt()} m", color = Color.White, fontSize = 12.sp)
+            Text(formatKm(trip.distance), color = Color.Gray, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun TripDetailDialog(
+    trip: Trip,
+    viewModel: GeoViewModel,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val profile by produceState(initialValue = emptyList<Double>(), trip) {
+        value = viewModel.tripElevationProfile(trip)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(trip.name) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(formatStamp(trip.startDate), color = Color.Gray, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                if (profile.size > 1) {
+                    ElevationProfileCanvas(profile)
+                    Spacer(Modifier.height(8.dp))
+                }
+                tripStatRow(stringResource(R.string.trip_field_ascent), "↑ ${trip.totalAscent.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_descent), "↓ ${trip.totalDescent.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_max_altitude), "${trip.maxAltitude.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_min_altitude), "${trip.minAltitude.roundToInt()} m")
+                tripStatRow(stringResource(R.string.trip_field_distance), formatKm(trip.distance))
+                tripStatRow(stringResource(R.string.trip_field_moving_time), formatDuration(trip.movingTime))
+                tripStatRow(stringResource(R.string.trip_field_total_time), formatDuration((trip.endDate - trip.startDate) / 1000.0))
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) } },
+        dismissButton = { TextButton(onClick = onDelete) { Text(stringResource(R.string.action_delete), color = Color(0xFFFF3B30)) } }
+    )
+}
+
+@Composable
+private fun tripStatRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, color = Color.Gray, fontSize = 13.sp)
+        Text(value, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun ElevationProfileCanvas(profile: List<Double>) {
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+    ) {
+        if (profile.size > 1) {
+            val minV = profile.minOrNull() ?: 0.0
+            val maxV = profile.maxOrNull() ?: 1.0
+            val range = (maxV - minV).coerceAtLeast(1.0)
+            val path = Path()
+            profile.forEachIndexed { i, v ->
+                val x = size.width * i / (profile.size - 1)
+                val y = size.height * (1f - ((v - minV) / range).toFloat())
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, color = Color(0xFFFF9800), style = Stroke(width = 3f))
+        }
+    }
+}
+
+private fun formatKm(m: Double): String = String.format(Locale.US, "%.2f km", m / 1000.0)
+
+private fun formatDuration(seconds: Double): String {
+    val t = maxOf(0L, seconds.toLong())
+    val h = t / 3600
+    val m = (t % 3600) / 60
+    val s = t % 60
+    return when {
+        h > 0 -> "${h}h ${m}m"
+        m > 0 -> "${m}m ${s}s"
+        else -> "${s}s"
+    }
+}
+
+// Cached formatters — these are called per list item / per recomposition, so
+// reuse a single instance instead of allocating one each call (the codebase
+// does the same in MapScreen). Main-thread-only use, so sharing is safe.
+private val tripStampFormat = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
+private val tripDayFormat = SimpleDateFormat("MMM d", Locale.getDefault())
+
+private fun formatStamp(ms: Long): String = tripStampFormat.format(Date(ms))
+
+private fun defaultTripName(prefix: String, ms: Long): String = "$prefix ${tripDayFormat.format(Date(ms))}"

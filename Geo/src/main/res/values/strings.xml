@@ -73,9 +73,29 @@
     <string name="action_continue">Continue</string>
     <string name="action_open_settings">Open Settings</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_close">Close</string>
+    <string name="action_delete">Delete</string>
     <string name="action_clear_history">Clear history</string>
     <string name="clear_history_title">Clear history?</string>
     <string name="clear_history_message">This permanently deletes all recorded history and cannot be undone.</string>
+
+    <!-- Trip Recorder (M5c) -->
+    <string name="section_trips">TRIPS</string>
+    <string name="trip_start">Start trip</string>
+    <string name="trip_stop_save">Stop &amp; Save</string>
+    <string name="trip_discard">Discard</string>
+    <string name="trip_recording_format">● Recording — %1$s</string>
+    <string name="trip_empty">No trips yet — tap Start to record an outing.</string>
+    <string name="trip_name_dialog_title">Name this trip</string>
+    <string name="trip_default_name_prefix">Trip</string>
+    <string name="trip_field_ascent">Ascent</string>
+    <string name="trip_field_descent">Descent</string>
+    <string name="trip_field_max_altitude">Max altitude</string>
+    <string name="trip_field_min_altitude">Min altitude</string>
+    <string name="trip_field_distance">Distance</string>
+    <string name="trip_field_moving_time">Moving time</string>
+    <string name="trip_field_total_time">Total time</string>
 
     <!-- Fallbacks -->
     <string name="fallback_loading">Loading…</string>

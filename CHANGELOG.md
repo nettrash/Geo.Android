@@ -36,6 +36,11 @@ hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus
   throttle is now atomic; assorted AR/skyline fixes.
 
 ### Added
+- **Trip Recorder** — one tap on the Stat tab wraps the always-on sample stream
+  into a named outing. Each trip shows total ascent/descent (with sub-3 m noise
+  smoothed so the number doesn't inflate), max/min altitude, distance, moving time,
+  and an elevation profile. 100 % on-device (new Room `trips` table, non-destructive
+  schema migration v2→v3). A recording survives an app restart.
 - **Peak bearing & compass arrow** — the closest- and highest-mountain cards now
   show the true bearing to the peak ("117° SE") with an arrow that rotates to your
   live heading, so it always points at the summit — a low-power, AR-free
