@@ -19,11 +19,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import me.nettrash.geo.data.model.InformationToken
 import me.nettrash.geo.data.snapshot.SharedSnapshotStore
+import me.nettrash.geo.sensor.Atmosphere
 import me.nettrash.geo.util.AppLog
+import me.nettrash.geo.util.QnhRepository
 import me.nettrash.geo.widget.GeoWidget
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
-import kotlin.math.ln
 
 /**
  * Periodic barometer-only sample, mirroring iOS
@@ -35,7 +36,8 @@ import kotlin.math.ln
 @HiltWorker
 class BarometerRefreshWorker @AssistedInject constructor(
     @Assisted private val context: Context,
-    @Assisted params: WorkerParameters
+    @Assisted params: WorkerParameters,
+    private val qnhRepository: QnhRepository
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -69,8 +71,20 @@ class BarometerRefreshWorker @AssistedInject constructor(
             return Result.success()
         }
 
-        val pressureKpa = pressureHpa / 10.0
-        val altitude = ln(101.325 / pressureKpa) / 0.00012
+        // Clamp the sample to a plausible barometric range (#11) so a
+        // spurious reading can't poison the persisted altitude/history.
+        val pressureKpa = (pressureHpa / 10.0).coerceIn(30.0, 110.0)
+        // Mirror the foreground BarometerManager: prefer a calibrated
+        // altitude against a real (persisted/last-known) QNH and only
+        // fall back to the standard-atmosphere reference when none is
+        // available. This keeps background/widget/history altitude in
+        // agreement with the app and with iOS's calibrated path.
+        val qnhHpa = qnhRepository.lastKnownQnhHpa()
+        val altitude: Double = if (qnhHpa != null) {
+            SensorManager.getAltitude(qnhHpa.toFloat(), (pressureKpa * 10.0).toFloat()).toDouble()
+        } else {
+            Atmosphere.altitude(pressureKpa)
+        }
 
         // Preserve last-known GPS state from the buffered current
         // snapshot so the widget shows complete data after this

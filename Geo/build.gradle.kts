@@ -17,7 +17,7 @@ plugins {
 // The file IS tracked in git so the bump propagates between machines
 // (commit it after a release).
 //
-// versionName is human (semver). Defaults to "1.0" but can be overridden
+// versionName is human (semver). Defaults to "1.1" but can be overridden
 // at the command line with `-PversionName=1.2.3`.
 val versionPropsFile = rootProject.file("version.properties")
 val versionProps = Properties().apply {
@@ -44,7 +44,7 @@ val storedVersionCode: Int = run {
 }
 
 val resolvedVersionName: String =
-    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.0"
+    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.1"
 
 // Allow opting out of the bump for one build (useful for CI which doesn't
 // want to mutate the tracked file on the runner): `-PnoBump`.
@@ -57,6 +57,20 @@ val skipVersionBump: Boolean = project.hasProperty("noBump")
 // Returns `null` when nothing is configured — the release build then falls
 // back to the debug signing config so `assembleRelease` still works locally
 // without keys (it just won't be uploadable to Play).
+// Google Maps SDK key — injected into the manifest's
+// `com.google.android.geo.API_KEY` meta-data via the MAPS_API_KEY
+// manifestPlaceholder rather than committed as a literal. Read from
+// `local.properties` at the repo root (which is gitignored, alongside
+// keystore.properties / *.jks), defaulting to an empty string when absent
+// so the build still configures (the Map tab just won't render tiles).
+val localProperties: Properties = Properties().apply {
+    val localPropsFile = rootProject.file("local.properties")
+    if (localPropsFile.exists()) {
+        localPropsFile.inputStream().use(::load)
+    }
+}
+val mapsApiKey: String = localProperties.getProperty("MAPS_API_KEY") ?: ""
+
 val releaseSigning: Map<String, String>? = run {
     val propsFile = rootProject.file("keystore.properties")
     if (propsFile.exists()) {
@@ -93,6 +107,10 @@ android {
         targetSdk = 36
         versionCode = storedVersionCode
         versionName = resolvedVersionName
+
+        // Supplies the manifest's com.google.android.geo.API_KEY meta-data
+        // (`android:value="${MAPS_API_KEY}"`) from local.properties.
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
     signingConfigs {

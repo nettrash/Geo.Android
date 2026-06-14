@@ -59,6 +59,7 @@ class PeakFinder @Inject constructor(
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
+        .addInterceptor(RetryInterceptor(minIntervalMs = 1000))
         .build()
 
     /**
@@ -140,17 +141,32 @@ class PeakFinder @Inject constructor(
         peaks: List<NearbyPeak>,
         location: Location
     ): List<NearbyPeak> {
-        return peaks.map { peak ->
-            val d = GeoCalculations.distanceBetween(
-                location.latitude, location.longitude,
-                peak.latitude, peak.longitude
-            )
-            val b = GeoCalculations.bearing(
-                location.latitude, location.longitude,
-                peak.latitude, peak.longitude
-            )
-            peak.copy(distance = d, bearing = b)
-        }
+        // Apply the same TTL + drop-radius eviction the full-search branch
+        // does, so a stationary user (who only ever takes this path) still
+        // ages out peaks that haven't been re-confirmed within peakTtlMs or
+        // have drifted outside the drop radius.
+        val now = System.currentTimeMillis()
+        val dropRadius = searchRadius * 2
+        return peaks
+            .filter { peak ->
+                val pl = Location("").apply {
+                    latitude = peak.latitude
+                    longitude = peak.longitude
+                }
+                val d = location.distanceTo(pl).toDouble()
+                d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs
+            }
+            .map { peak ->
+                val d = GeoCalculations.distanceBetween(
+                    location.latitude, location.longitude,
+                    peak.latitude, peak.longitude
+                )
+                val b = GeoCalculations.bearing(
+                    location.latitude, location.longitude,
+                    peak.latitude, peak.longitude
+                )
+                peak.copy(distance = d, bearing = b)
+            }
     }
 
     private fun isDuplicate(peak: NearbyPeak, existing: List<NearbyPeak>): Boolean {
@@ -183,9 +199,11 @@ class PeakFinder @Inject constructor(
      */
     private suspend fun searchOpenStreetMap(location: Location): List<NearbyPeak> {
         // Quantise lat/lon to ~110 m grid before sending to the
-        // public API. Mirrors iOS privacy note.
-        val qLat = (location.latitude * 1000).toInt() / 1000.0
-        val qLon = (location.longitude * 1000).toInt() / 1000.0
+        // public API. Uses the shared round-half helper so Overpass,
+        // Open-Elevation and the elevation cache all bucket identically,
+        // matching iOS.
+        val qLat = TerrainElevationService.quantise(location.latitude)
+        val qLon = TerrainElevationService.quantise(location.longitude)
         val radiusMeters = searchRadius.toInt()
 
         val query = """
@@ -198,7 +216,10 @@ class PeakFinder @Inject constructor(
         val url = "https://overpass-api.de/api/interpreter?data=$encodedQuery"
 
         val elements: List<OverpassElement> = try {
-            val request = Request.Builder().url(url).build()
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", TerrainElevationService.USER_AGENT)
+                .build()
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) return emptyList()
             val body = response.body.string()

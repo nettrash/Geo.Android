@@ -22,7 +22,7 @@ object AppModule {
             context,
             GeoDatabase::class.java,
             "geo_database"
-        ).build()
+        ).addMigrations(GeoDatabase.MIGRATION_1_2).build()
     }
 
     @Provides

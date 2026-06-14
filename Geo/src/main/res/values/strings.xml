@@ -26,6 +26,10 @@
     <string name="section_tracking">TRACKING</string>
     <string name="section_statistics">STATISTICS</string>
 
+    <!-- Coordinate unit suffixes (standard lat/lon abbreviations) -->
+    <string name="unit_latitude">lat</string>
+    <string name="unit_longitude">lon</string>
+
     <!-- Generic field labels -->
     <string name="field_name">Name</string>
     <string name="field_altitude">Altitude</string>
@@ -35,7 +39,7 @@
     <string name="field_velocity">Velocity</string>
     <string name="field_geography">Geography</string>
     <string name="field_mountain">Mountain</string>
-    <string name="field_percent_everest">% Everest</string>
+    <string name="field_percent_everest" formatted="false">% Everest</string>
     <string name="field_calibrating">calibrating…</string>
     <string name="field_height">Height</string>
     <string name="field_region">Region</string>
@@ -49,6 +53,9 @@
     <string name="action_continue">Continue</string>
     <string name="action_open_settings">Open Settings</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_clear_history">Clear history</string>
+    <string name="clear_history_title">Clear history?</string>
+    <string name="clear_history_message">This permanently deletes all recorded history and cannot be undone.</string>
 
     <!-- Fallbacks -->
     <string name="fallback_loading">Loading…</string>
@@ -104,6 +111,7 @@
     <string name="widget_label_speed">Speed</string>
     <string name="widget_label_lat">Lat</string>
     <string name="widget_label_lon">Lon</string>
+    <string name="widget_no_data">No information available…</string>
 
     <!-- Widget configuration screen -->
     <string name="widget_config_title">Configure widget</string>

@@ -39,10 +39,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import me.nettrash.geo.wear.Atmosphere
 import me.nettrash.geo.wear.WearSnapshotStore
 import java.util.Locale
 import kotlin.coroutines.resume
-import kotlin.math.ln
 
 /**
  * Wear Tile that mirrors iOS `AltitudeRectangularView`:
@@ -106,8 +106,20 @@ class GeoTileService : TileService() {
         // 1. Try a fresh barometer sample.
         val pressureHpa = sampleBarometer(context)
         if (pressureHpa != null) {
-            val pressureKpa = pressureHpa / 10.0
-            val altitude = ln(101.325 / pressureKpa) / 0.00012
+            // Clamp the live sample to a plausible barometric range (#11).
+            val pressureKpa = (pressureHpa / 10.0).coerceIn(30.0, 110.0)
+            // Prefer the phone's calibration reference (same formula as
+            // WearBarometerManager.onSensorChanged) so the tile agrees
+            // with the in-app reading and the iOS tile; fall back to
+            // standard atmosphere only when no calibrated reference
+            // exists. `barPreassure` is the misspelled on-wire field.
+            val token = WearSnapshotStore.token.value
+            val altitude = if (token != null && token.barPreassure > 0) {
+                token.barAltitude +
+                    (Atmosphere.altitude(pressureKpa) - Atmosphere.altitude(token.barPreassure))
+            } else {
+                Atmosphere.altitude(pressureKpa)
+            }
             return TileData(pressureKpa, altitude, isFromBarometer = true)
         }
         // 2. Fall back to the last phone-pushed snapshot.
@@ -150,7 +162,7 @@ class GeoTileService : TileService() {
     ): Tile {
         val altitudeText = String.format(Locale.US, "%.0f m", data.altitudeMeters)
         val pressureText = String.format(Locale.US, "%.2f kPa", data.pressureKpa)
-        val gaugeFraction = (data.altitudeMeters / 8848.0)
+        val gaugeFraction = (data.altitudeMeters / Atmosphere.EVEREST_HEIGHT_M)
             .coerceIn(0.0, 1.0)
             .toFloat()
 

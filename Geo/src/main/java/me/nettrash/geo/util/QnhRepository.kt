@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import me.nettrash.geo.ar.TerrainElevationService
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -80,7 +81,13 @@ class QnhRepository @Inject constructor(
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
+        .addInterceptor(RetryInterceptor(minIntervalMs = 200))
         .build()
+
+    /** Durable cache of the last fetched QNH so cold starts and the
+     *  background worker have a real calibration reference before any
+     *  network call completes. */
+    private val store = QnhStore(context)
 
     /** Distance threshold for triggering a refresh. */
     private val refreshDistanceMeters = 5_000.0
@@ -88,8 +95,52 @@ class QnhRepository @Inject constructor(
     /** Time-based refresh interval (ms). */
     private val refreshIntervalMs: Long = 30 * 60 * 1000L
 
+    /** A persisted QNH older than this is treated as stale and not used
+     *  to seed [qnhHpa]/[hasAbsoluteFix] on init — weather can drift
+     *  enough over several hours that the standard atmosphere is no
+     *  worse than a very old reading. */
+    private val staleAfterMs: Long = 6 * 60 * 60 * 1000L
+
     private var lastFetchLocation: Location? = null
     private var lastFetchAtMs: Long = 0L
+
+    init {
+        // Seed in-memory state from the last persisted fetch (with a
+        // staleness check) so the very first barometer sample after a
+        // cold start, and every offline session, can already calibrate.
+        scope.launch {
+            val persisted = store.read() ?: return@launch
+            val age = System.currentTimeMillis() - persisted.fetchAtMs
+            if (age in 0..staleAfterMs) {
+                fetchLock.withLock {
+                    // A concurrent fresh fetch may have already landed;
+                    // only seed if we're still uncalibrated.
+                    if (_qnhHpa.value == null) {
+                        _qnhHpa.value = persisted.qnhHpa
+                        _hasAbsoluteFix.value = true
+                        lastFetchLocation = Location("qnhStore").apply {
+                            latitude = persisted.lat
+                            longitude = persisted.lon
+                        }
+                        lastFetchAtMs = persisted.fetchAtMs
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Last-known QNH (hPa) for background consumers that can't observe
+     * the [qnhHpa] flow over time (e.g. [me.nettrash.geo.worker.BarometerRefreshWorker]).
+     * Returns the in-memory value if seeded, otherwise reads through to
+     * the persisted store, applying the same staleness check.
+     */
+    suspend fun lastKnownQnhHpa(): Double? {
+        _qnhHpa.value?.let { return it }
+        val persisted = store.read() ?: return null
+        val age = System.currentTimeMillis() - persisted.fetchAtMs
+        return if (age in 0..staleAfterMs) persisted.qnhHpa else null
+    }
 
     /**
      * Called from [me.nettrash.geo.location.LocationManager] every
@@ -120,6 +171,9 @@ class QnhRepository @Inject constructor(
                     _hasAbsoluteFix.value = true
                     lastFetchLocation = Location(location)
                     lastFetchAtMs = nowInner
+                    // Write through so cold starts / the worker can reuse
+                    // this reference without a fresh network round-trip.
+                    store.write(qnh, nowInner, location.latitude, location.longitude)
                     AppLog.barometer.info(
                         "QNH refreshed: ${"%.2f".format(qnh)} hPa @ " +
                             "(${"%.3f".format(location.latitude)}, " +
@@ -131,14 +185,19 @@ class QnhRepository @Inject constructor(
     }
 
     private suspend fun fetch(lat: Double, lon: Double): Double? = withContext(Dispatchers.IO) {
-        // 3-decimal quantisation — privacy + cache-friendliness.
-        val qLat = Math.round(lat * 1000.0) / 1000.0
-        val qLon = Math.round(lon * 1000.0) / 1000.0
+        // Quantise through the shared ~110 m privacy grid so all three
+        // network clients (Overpass, Open-Elevation, Open-Meteo/QNH)
+        // use identical grid math — privacy + cache-friendliness.
+        val qLat = TerrainElevationService.quantise(lat)
+        val qLon = TerrainElevationService.quantise(lon)
 
         val url = "https://api.open-meteo.com/v1/forecast" +
             "?latitude=$qLat&longitude=$qLon&current=pressure_msl"
         try {
-            val req = Request.Builder().url(url).build()
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", USER_AGENT)
+                .build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     AppLog.barometer.warn("QNH HTTP ${resp.code}")
@@ -159,6 +218,13 @@ class QnhRepository @Inject constructor(
             AppLog.barometer.warn("QNH fetch failed", t)
             null
         }
+    }
+
+    private companion object {
+        /** Descriptive, app-identifying User-Agent so the third-party
+         *  API operator can attribute / contact us rather than seeing
+         *  anonymous library traffic. */
+        const val USER_AGENT = "me.nettrash.Geo/1.0 (+https://nettrash.me)"
     }
 }
 

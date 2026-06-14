@@ -20,8 +20,25 @@ class HistoryRepository @Inject constructor(
     private val amountOfValues = 30
     private val numberOfDays = 30
 
+    /** How long a HistoryItem is kept before retention pruning removes it.
+     *  ~366 days so a full year (including a leap day) is always available
+     *  to the statistics views. Mirrors iOS History.retentionDays. */
+    private val retentionDays = 366
+
     suspend fun insert(item: HistoryItem) {
         historyDao.insert(item)
+    }
+
+    /** Drop history older than the retention window. Run once at startup. */
+    suspend fun prune() {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -retentionDays)
+        historyDao.deleteOlderThan(cal.timeInMillis)
+    }
+
+    /** Delete all recorded history. Backs the "Clear history" action. */
+    suspend fun clearAll() {
+        historyDao.deleteAll()
     }
 
     suspend fun getItemsSince(days: Int = numberOfDays): List<HistoryItem> {
@@ -39,17 +56,15 @@ class HistoryRepository @Inject constructor(
         return historyDao.findByRecordDate(recordDate)
     }
 
-    suspend fun buildPressureDataSet(): Triple<List<DataItem>, Float, Float> {
-        val items = getItemsSince()
+    fun buildPressureDataSet(items: List<HistoryItem>): Triple<List<DataItem>, Float, Float> {
         if (items.isEmpty()) return Triple(emptyList(), 0f, 1000f)
 
-        val earliest = items.minOf { it.recordDate }
         val cal = Calendar.getInstance()
-        cal.timeInMillis = earliest
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
+        cal.add(Calendar.DAY_OF_YEAR, -(amountOfValues - 1))
         val minDate = cal.timeInMillis
 
         val dataSet = mutableListOf<DataItem>()
@@ -79,17 +94,15 @@ class HistoryRepository @Inject constructor(
         return Triple(dataSet, min, max)
     }
 
-    suspend fun buildBarometerAltitudeDataSet(): Triple<List<DataItem>, Float, Float> {
-        val items = getItemsSince()
+    fun buildBarometerAltitudeDataSet(items: List<HistoryItem>): Triple<List<DataItem>, Float, Float> {
         if (items.isEmpty()) return Triple(emptyList(), 0f, 10000f)
 
-        val earliest = items.minOf { it.recordDate }
         val cal = Calendar.getInstance()
-        cal.timeInMillis = earliest
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
+        cal.add(Calendar.DAY_OF_YEAR, -(amountOfValues - 1))
         val minDate = cal.timeInMillis
 
         val dataSet = mutableListOf<DataItem>()
@@ -113,23 +126,21 @@ class HistoryRepository @Inject constructor(
         var max = 10000f
         val minVal = dataSet.minOfOrNull { it.value } ?: 0f
         val maxVal = dataSet.maxOfOrNull { it.value } ?: 0f
-        if (minVal - 250 > 0f) min = minVal - 50f else if (minVal < 0f) min = minVal
-        if (maxVal + 250 < 10000f) max = maxVal + 50f else if (maxVal > 10000f) max = maxVal
+        if (minVal - 50 > 0f) min = minVal - 50f else if (minVal < 0f) min = minVal
+        if (maxVal + 50 < 10000f) max = maxVal + 50f else if (maxVal > 10000f) max = maxVal
 
         return Triple(dataSet, min, max)
     }
 
-    suspend fun buildGPSAltitudeDataSet(): Triple<List<DataItem>, Float, Float> {
-        val items = getItemsSince()
+    fun buildGPSAltitudeDataSet(items: List<HistoryItem>): Triple<List<DataItem>, Float, Float> {
         if (items.isEmpty()) return Triple(emptyList(), 0f, 10000f)
 
-        val earliest = items.minOf { it.recordDate }
         val cal = Calendar.getInstance()
-        cal.timeInMillis = earliest
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
+        cal.add(Calendar.DAY_OF_YEAR, -(amountOfValues - 1))
         val minDate = cal.timeInMillis
 
         val dataSet = mutableListOf<DataItem>()
@@ -153,8 +164,8 @@ class HistoryRepository @Inject constructor(
         var max = 10000f
         val minVal = dataSet.minOfOrNull { it.value } ?: 0f
         val maxVal = dataSet.maxOfOrNull { it.value } ?: 0f
-        if (minVal - 250 > 0f) min = minVal - 50f else if (minVal < 0f) min = minVal
-        if (maxVal + 250 < 10000f) max = maxVal + 50f else if (maxVal > 10000f) max = maxVal
+        if (minVal - 50 > 0f) min = minVal - 50f else if (minVal < 0f) min = minVal
+        if (maxVal + 50 < 10000f) max = maxVal + 50f else if (maxVal > 10000f) max = maxVal
 
         return Triple(dataSet, min, max)
     }
@@ -180,8 +191,8 @@ class HistoryRepository @Inject constructor(
         val allVals = trackingDataSet.flatMap { it.values }
         val minVal = allVals.minOrNull() ?: 0f
         val maxVal = allVals.maxOrNull() ?: 0f
-        if (minVal - 250 > 0f) min = minVal - 50f else if (minVal < 0f) min = minVal
-        if (maxVal + 250 < 10000f) max = maxVal + 50f else if (maxVal > 10000f) max = maxVal
+        if (minVal - 50 > 0f) min = minVal - 50f else if (minVal < 0f) min = minVal
+        if (maxVal + 50 < 10000f) max = maxVal + 50f else if (maxVal > 10000f) max = maxVal
 
         return Triple(trackingDataSet.toList(), min, max)
     }

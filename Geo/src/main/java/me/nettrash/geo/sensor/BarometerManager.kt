@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import me.nettrash.geo.util.QnhRepository
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.ln
 
 /**
  * Streams the device's barometer and turns the raw pressure into
@@ -58,14 +57,20 @@ class BarometerManager @Inject constructor(
 
     var onDataUpdated: (() -> Unit)? = null
 
+    private var isStarted = false
+
     fun start() {
+        if (isStarted) return
         pressureSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            isStarted = true
         }
     }
 
     fun stop() {
+        if (!isStarted) return
         sensorManager.unregisterListener(this)
+        isStarted = false
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -74,7 +79,9 @@ class BarometerManager @Inject constructor(
         // so consumers that report in kPa (info card, widget) don't
         // need to convert.
         val pressureHpa = event.values[0]
-        val pressureKpa = pressureHpa / 10.0
+        // Clamp the live sample to a plausible barometric range (#11)
+        // so a spurious sensor reading can't poison altitude/history.
+        val pressureKpa = (pressureHpa / 10.0).coerceIn(30.0, 110.0)
         _pressure.value = pressureKpa
 
         val qnhHpa = qnhRepository.qnhHpa.value
@@ -84,16 +91,15 @@ class BarometerManager @Inject constructor(
             // barometric formula with proper temperature lapse,
             // which `ln(p0 / p) / 0.00012` approximates badly at
             // altitudes more than a couple of km.
-            SensorManager.getAltitude(qnhHpa.toFloat(), pressureHpa).toDouble()
+            SensorManager.getAltitude(qnhHpa.toFloat(), (pressureKpa * 10.0).toFloat()).toDouble()
         } else {
-            // Uncalibrated fallback — matches the iOS pre-CMAltimeter
-            // approximation so the readings don't suddenly stall at
+            // Uncalibrated fallback — lapse-rate standard-atmosphere
+            // altitude (#10) so the readings don't suddenly stall at
             // zero while QNH is being fetched.
-            val p0Kpa = 101.325
-            ln(p0Kpa / pressureKpa) / 0.00012
+            Atmosphere.altitude(pressureKpa)
         }
         _height.value = altitude
-        _everest.value = altitude / 8848.0
+        _everest.value = altitude / Atmosphere.EVEREST_HEIGHT_M
 
         onDataUpdated?.invoke()
     }

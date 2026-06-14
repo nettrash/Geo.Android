@@ -29,10 +29,14 @@ data class NearbyPeak(
             bearing: Double,
             lastSeenAt: Long = System.currentTimeMillis()
         ): NearbyPeak {
-            // Stable UUID derived from coordinates to prevent marker flash
-            val bits = java.lang.Double.doubleToLongBits(latitude) xor
-                    (java.lang.Double.doubleToLongBits(longitude) shl 32)
-            val uuid = UUID(bits, bits.inv())
+            // Stable UUID derived from coordinates to prevent marker flash.
+            // Pack the full 64-bit IEEE-754 pattern of latitude into the high
+            // half and longitude into the low half (mirrors iOS NearbyPeak),
+            // so distinct coordinates can never collide on the same id.
+            val uuid = UUID(
+                java.lang.Double.doubleToLongBits(latitude),
+                java.lang.Double.doubleToLongBits(longitude)
+            )
             return NearbyPeak(uuid, name, latitude, longitude, altitude, distance, bearing, lastSeenAt)
         }
     }

@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,6 +114,13 @@ class GeoViewModel @Inject constructor(
         // `GeoAppDelegate.restoreFromSharedStorage()`.
         restoreFromSharedStorage()
 
+        // Retention prune: drop history older than the ~1-year window.
+        // Runs once at startup off the main thread. Mirrors iOS
+        // `History` launch-time prune.
+        viewModelScope.launch(Dispatchers.IO) {
+            historyRepository.prune()
+        }
+
         // Set up barometer callbacks
         barometerManager.onDataUpdated = {
             locationManager.onBarometerUpdated(
@@ -184,25 +192,67 @@ class GeoViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Dirty flag mirroring iOS `History.isDirty`. recordHistory (and any
+     * other insert path) flips this instead of eagerly rebuilding the
+     * graphs; UI surfaces call [refreshIfNeeded] which no-ops when clean.
+     * `@Volatile` because it is read/written from coroutines.
+     */
+    @Volatile
+    private var historyDirty: Boolean = true
+
+    /** Mark the history cache stale without rebuilding (cheap). */
+    private fun markHistoryDirty() {
+        historyDirty = true
+    }
+
+    /**
+     * Refresh the history-derived StateFlows only when something has
+     * changed since the last rebuild. Called from the Stat / Map / AR
+     * surfaces. Mirrors iOS `History.refreshIfNeeded()`.
+     */
+    fun refreshIfNeeded() {
+        if (!historyDirty) return
+        refreshHistory()
+    }
+
     fun refreshHistory() {
+        // Clear the flag up-front so concurrent inserts that land during
+        // the rebuild re-mark it dirty rather than being lost.
+        historyDirty = false
         viewModelScope.launch {
+            // Fetch the 30-day window ONCE and feed it into all three
+            // builders (was: one query here + one inside each build*,
+            // i.e. four identical SELECTs per refresh — see A9/A23).
             val items = historyRepository.getItemsSince()
             _historyItems.value = items
 
-            val (pData, pMin, pMax) = historyRepository.buildPressureDataSet()
+            val (pData, pMin, pMax) = historyRepository.buildPressureDataSet(items)
             _pressureDataSet.value = pData
             _pressureMin.value = pMin
             _pressureMax.value = pMax
 
-            val (bData, bMin, bMax) = historyRepository.buildBarometerAltitudeDataSet()
+            val (bData, bMin, bMax) = historyRepository.buildBarometerAltitudeDataSet(items)
             _barometerAltDataSet.value = bData
             _barometerAltMin.value = bMin
             _barometerAltMax.value = bMax
 
-            val (gData, gMin, gMax) = historyRepository.buildGPSAltitudeDataSet()
+            val (gData, gMin, gMax) = historyRepository.buildGPSAltitudeDataSet(items)
             _gpsAltDataSet.value = gData
             _gpsAltMin.value = gMin
             _gpsAltMax.value = gMax
+        }
+    }
+
+    /**
+     * Delete all recorded history, then rebuild the derived datasets so
+     * the Stat / Map / AR surfaces empty out immediately. Backs the
+     * "Clear history" action on the Stat screen (behind a confirmation).
+     */
+    fun clearHistory() {
+        viewModelScope.launch {
+            historyRepository.clearAll()
+            refreshHistory()
         }
     }
 
@@ -218,7 +268,10 @@ class GeoViewModel @Inject constructor(
                 gpsVelocity = maxOf(location.speed.toDouble(), 0.0)
             )
             historyRepository.insert(item)
-            refreshHistory()
+            // Mark dirty instead of rebuilding all three graph datasets
+            // on every step insert; the Stat/Map/AR surfaces pull a
+            // refresh via refreshIfNeeded(). Mirrors iOS markDirty().
+            markHistoryDirty()
         }
     }
 

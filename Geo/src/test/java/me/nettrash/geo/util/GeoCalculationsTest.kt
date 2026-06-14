@@ -29,9 +29,9 @@ class GeoCalculationsTest {
         val meters = GeoCalculations.distanceBetween(
             bigBenLat, bigBenLon, eiffelLat, eiffelLon
         )
-        // Tolerate ±2 km — the haversine formula assumes a perfect sphere
-        // and is fine to within ~0.5 % of WGS-84 reality at this distance.
-        assertThat(meters).isWithin(2_000.0).of(343_000.0)
+        // Great-circle Big Ben <-> Eiffel Tower is ~340.5 km (the previous
+        // 343 km expectation was simply wrong); +/-2 km covers sphere/WGS-84 drift.
+        assertThat(meters).isWithin(2_000.0).of(340_500.0)
     }
 
     @Test fun distanceToSelfIsZero() {

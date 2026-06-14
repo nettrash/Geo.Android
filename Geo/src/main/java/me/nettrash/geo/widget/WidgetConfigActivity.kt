@@ -26,8 +26,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
+import androidx.glance.appwidget.state.getAppWidgetState
 import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -136,10 +137,32 @@ private fun ConfigUi(
     appWidgetId: Int,
     onConfirm: (showBarometer: Boolean, showGps: Boolean) -> Unit
 ) {
-    var showBarometer by remember { mutableStateOf(true) }
-    var showGps by remember { mutableStateOf(true) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+
+    // On reconfigure the same activity is reused to edit an existing
+    // widget, so seed the switches from this instance's persisted prefs
+    // rather than hardcoding ON — otherwise confirming would silently
+    // re-enable a section the user had turned off. Defaults to ON only
+    // when nothing was saved (new widget). Mirrors iOS, where WidgetKit
+    // re-presents the AppIntent's stored parameter values.
+    val saved by produceState<Pair<Boolean, Boolean>?>(initialValue = null, appWidgetId) {
+        value = runCatching {
+            val glanceId = GlanceAppWidgetManager(context).getGlanceIdBy(appWidgetId)
+            val prefs = getAppWidgetState(
+                context = context,
+                definition = WidgetConfig.stateDefinition,
+                glanceId = glanceId
+            )
+            WidgetConfig.showBarometer(prefs) to WidgetConfig.showGps(prefs)
+        }.getOrNull() ?: (true to true)
+    }
+
+    // Wait until the persisted prefs have loaded before showing the
+    // switches so they never flash the wrong (hardcoded) state.
+    val loaded = saved ?: return
+
+    var showBarometer by remember(loaded) { mutableStateOf(loaded.first) }
+    var showGps by remember(loaded) { mutableStateOf(loaded.second) }
 
     Column(
         modifier = Modifier
