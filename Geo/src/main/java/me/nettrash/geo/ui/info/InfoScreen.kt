@@ -22,6 +22,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -38,6 +41,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nettrash.geo.sensor.PressureTrendClass
 import me.nettrash.geo.ui.GeoViewModel
+import me.nettrash.geo.util.Solar
+import kotlinx.coroutines.delay
+import java.text.DateFormat
+import java.util.Date
 import java.util.Locale
 
 @Composable
@@ -140,6 +147,9 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 }
             }
         }
+
+        // SUN section — today's solar windows + live countdown.
+        SolarInfoCard(location)
 
         // CLOSEST MOUNTAIN section
         val unknown = stringResource(R.string.fallback_unknown)
@@ -316,4 +326,101 @@ private fun trendColor(cls: PressureTrendClass): Color = when (cls) {
     PressureTrendClass.FALLING -> Color(0xFFFFC107)      // amber
     PressureTrendClass.RISING -> Color(0xFF43A047)       // green
     PressureTrendClass.STEADY, PressureTrendClass.UNKNOWN -> Color(0xFFB0BEC5) // muted
+}
+
+/**
+ * Today's solar windows for the user's exact position and altitude with a
+ * live "X h to sunset" countdown. 100 % on-device via the shared [Solar]
+ * (NOAA) math; the altitude horizon-dip shifts sunrise earlier and sunset
+ * later from a summit. Mirrors iOS `SolarInformationView`.
+ */
+@Composable
+private fun SolarInfoCard(location: android.location.Location?) {
+    val context = LocalContext.current
+    val timeFormat = remember { android.text.format.DateFormat.getTimeFormat(context) }
+
+    // Tick once a second so the countdown stays live.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+
+    InfoCard(watermark = stringResource(R.string.section_solar)) {
+        if (location == null) {
+            InfoRow(stringResource(R.string.field_countdown)) {
+                MonoText(stringResource(R.string.solar_waiting))
+            }
+            return@InfoCard
+        }
+
+        val lat = location.latitude
+        val lon = location.longitude
+        val alt = location.altitude
+        // Recompute the day's windows only when position or the local
+        // calendar day changes — NOT every second. The countdown row below
+        // is the only thing driven off the per-second `now` tick. Mirrors
+        // iOS, where `times` is computed once and only the countdown ticks.
+        val tz = remember { java.util.TimeZone.getDefault() }
+        val localDayKey = (now + tz.getOffset(now)) / 86_400_000L
+        val times = remember(lat, lon, alt, localDayKey) { Solar.times(now, lat, lon, alt) }
+
+        InfoRow(stringResource(R.string.field_countdown)) {
+            MonoText(solarCountdownText(context, times, now, lat, lon, alt))
+        }
+        InfoRow(stringResource(R.string.field_dawn)) { MonoText(timeOrDash(times.civilDawn, timeFormat)) }
+        InfoRow(stringResource(R.string.field_sunrise)) { MonoText(timeOrDash(times.sunrise, timeFormat)) }
+        InfoRow(stringResource(R.string.field_golden_am)) {
+            MonoText(rangeOrDash(times.goldenDawn, times.goldenMorningEnd, timeFormat))
+        }
+        InfoRow(stringResource(R.string.field_solar_noon)) { MonoText(timeOrDash(times.solarNoon, timeFormat)) }
+        InfoRow(stringResource(R.string.field_golden_pm)) {
+            MonoText(rangeOrDash(times.goldenEveningStart, times.goldenDusk, timeFormat))
+        }
+        InfoRow(stringResource(R.string.field_sunset)) { MonoText(timeOrDash(times.sunset, timeFormat)) }
+        InfoRow(stringResource(R.string.field_dusk)) { MonoText(timeOrDash(times.civilDusk, timeFormat)) }
+        InfoRow(stringResource(R.string.field_day_length)) { MonoText(durationOrDash(times.dayLengthMs)) }
+    }
+}
+
+/** Next horizon crossing to count down to: today's sunrise, then today's
+ *  sunset, then tomorrow's sunrise. Mirrors iOS `nextEvent`. */
+private fun solarCountdownText(
+    context: android.content.Context,
+    times: Solar.Times, now: Long, lat: Double, lon: Double, alt: Double
+): String {
+    times.sunrise?.let { if (now < it) return "${countdownString(it - now)} to sunrise" }
+    times.sunset?.let { if (now < it) return "${countdownString(it - now)} to sunset" }
+    if (times.isPolarDay) return context.getString(R.string.solar_sun_up)
+    if (times.isPolarNight) return context.getString(R.string.solar_polar_night)
+    // Advance one *local* day (DST-aware) rather than a fixed 86 400 000 ms,
+    // which would skip a day in the late evening before a spring-forward.
+    val cal = java.util.Calendar.getInstance()
+    cal.timeInMillis = now
+    cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+    val tomorrow = Solar.times(cal.timeInMillis, lat, lon, alt)
+    tomorrow.sunrise?.let { return "${countdownString(it - now)} to sunrise" }
+    return "—"
+}
+
+private fun countdownString(ms: Long): String {
+    val s = maxOf(0L, ms) / 1000L
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) "${h}h ${m}m" else "${m}m ${sec}s"
+}
+
+private fun timeOrDash(ms: Long?, fmt: DateFormat): String =
+    ms?.let { fmt.format(Date(it)) } ?: "—"
+
+private fun rangeOrDash(a: Long?, b: Long?, fmt: DateFormat): String =
+    if (a != null && b != null) "${fmt.format(Date(a))}–${fmt.format(Date(b))}" else "—"
+
+private fun durationOrDash(ms: Long?): String {
+    if (ms == null || ms <= 0) return "—"
+    val total = ms / 1000L
+    return "${total / 3600}h ${(total % 3600) / 60}m"
 }

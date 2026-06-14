@@ -25,6 +25,7 @@
     <string name="section_highest_mountain">HIGHEST MOUNTAIN</string>
     <string name="section_tracking">TRACKING</string>
     <string name="section_statistics">STATISTICS</string>
+    <string name="section_solar">S U N</string>
 
     <!-- Coordinate unit suffixes (standard lat/lon abbreviations) -->
     <string name="unit_latitude">lat</string>
@@ -44,6 +45,20 @@
     <string name="field_trend">3 h trend</string>
     <string name="field_height">Height</string>
     <string name="field_region">Region</string>
+
+    <!-- Solar panel (golden-hour / sunrise-sunset feature) -->
+    <string name="field_countdown">Countdown</string>
+    <string name="field_dawn">Dawn</string>
+    <string name="field_sunrise">Sunrise</string>
+    <string name="field_golden_am">Golden AM</string>
+    <string name="field_solar_noon">Solar noon</string>
+    <string name="field_golden_pm">Golden PM</string>
+    <string name="field_sunset">Sunset</string>
+    <string name="field_dusk">Dusk</string>
+    <string name="field_day_length">Day length</string>
+    <string name="solar_waiting">Waiting for location…</string>
+    <string name="solar_sun_up">Sun up all day</string>
+    <string name="solar_polar_night">Polar night</string>
     <string name="field_country">Country</string>
     <string name="field_location">Location</string>
     <string name="field_first_ascent">First Ascent</string>
