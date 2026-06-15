@@ -178,10 +178,14 @@ fun HorizonOverlay(
         }
     }
 
+    // De-collision spacing in px, density-scaled from the shared dp so pills pack
+    // to the same PHYSICAL tightness on every screen density (matches the dp the
+    // pills themselves are sized in).
+    val minSpacingPx = with(LocalDensity.current) { PEAK_LABEL_MIN_SPACING_DP.dp.toPx() }
     // Peak labels welded to the silhouette — the SAME selection the tap hit-test
     // uses (shared [weldedPeakLabels]), so only drawn pills are ever tappable.
-    val peakLabels = remember(skyline, view, cam, viewport, observerAlt, headingDeg, peaks) {
-        weldedPeakLabels(controller, peaks, skyline, observerAlt, headingDeg, viewport)
+    val peakLabels = remember(skyline, view, cam, viewport, observerAlt, headingDeg, peaks, minSpacingPx) {
+        weldedPeakLabels(controller, peaks, skyline, observerAlt, headingDeg, viewport, minSpacingPx)
     }
     // Leader length / pill-float in px, density-scaled from the shared dp so it
     // matches iOS's points physically (not a raw 40px ≈ 13dp sliver).
@@ -344,6 +348,17 @@ const val PEAK_LABEL_LEADER_DP = 42
 const val PEAK_LABEL_ROTATION_DEG = -75f
 
 /**
+ * Minimum horizontal gap between welded pill anchors before the nearer one wins
+ * the de-collision, in **dp** (converted to px at each call site, like
+ * [PEAK_LABEL_LEADER_DP]). Kept in dp — not raw px — so de-collision stays the
+ * same PHYSICAL tightness across screen densities; a px literal would pack pills
+ * too tight on xxhdpi and too loose on mdpi since the pills themselves are
+ * dp-sized. ~20dp ≈ the old 54px on a typical ~2.75× device. iOS uses 54
+ * density-independent points directly.
+ */
+const val PEAK_LABEL_MIN_SPACING_DP = 20
+
+/**
  * Camera heading (degrees, 0 = N) from the AR view matrix — the same derivation
  * [HorizonOverlay] uses, exposed so the tap hit-test welds against the same
  * labels the overlay drew.
@@ -410,15 +425,17 @@ fun weldedPeakLabels(
     skyline: List<SkylineSample>,
     observerAlt: Double,
     headingDeg: Double,
-    viewport: ArSceneController.IntSize
+    viewport: ArSceneController.IntSize,
+    minSpacingPx: Float
 ): List<PeakLabelInfo> {
     if (skyline.isEmpty()) return emptyList()
     val headingHalfWindowDeg = 110.0
     // Pills are rotated near-vertical ([PEAK_LABEL_ROTATION_DEG]), so their
-    // horizontal footprint is ~halved vs the old flat pills — tighten the
-    // de-collision spacing and lift the cap to match, so a crowded ridge keeps
-    // ~2× more neighbouring summits rather than dropping them.
-    val minSpacing = 54f
+    // horizontal footprint is ~halved vs the old flat pills — tighter de-collision
+    // (from the dp-based [PEAK_LABEL_MIN_SPACING_DP], passed in as px so it's the
+    // same physical gap at any density) plus a higher cap keeps a crowded ridge's
+    // neighbouring summits rather than dropping them.
+    val minSpacing = minSpacingPx
     val maxLabels = 16
     val boundsMargin = 200f
 

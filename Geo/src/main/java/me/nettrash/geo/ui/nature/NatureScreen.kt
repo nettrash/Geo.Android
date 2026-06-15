@@ -88,6 +88,7 @@ import me.nettrash.geo.ar.ArProjection
 import me.nettrash.geo.ar.ArSceneController
 import me.nettrash.geo.ar.HorizonOverlay
 import me.nettrash.geo.ar.PEAK_LABEL_LEADER_DP
+import me.nettrash.geo.ar.PEAK_LABEL_MIN_SPACING_DP
 import me.nettrash.geo.ar.PanoramaCapture
 import me.nettrash.geo.ar.SkylineSample
 import me.nettrash.geo.ar.cameraHeadingDeg
@@ -371,6 +372,9 @@ private fun ArScene(
     // Welded-pill leader length in px (same dp as the overlay), so the hit-test
     // targets the pill centre the overlay drew.
     val leaderPx = with(density) { PEAK_LABEL_LEADER_DP.dp.toPx() }
+    // De-collision spacing in px (same dp the overlay uses), so the hit-test
+    // re-derives the SAME drawn label set across densities.
+    val minSpacingPx = with(density) { PEAK_LABEL_MIN_SPACING_DP.dp.toPx() }
     // Measured marker sizes (id → px). Markers are TOP-LEFT-anchored on their
     // projected point, so the hit-test offsets by half the measured size to
     // compare against the visual CENTRE (matching iOS's center anchor).
@@ -501,13 +505,13 @@ private fun ArScene(
                     .fillMaxSize()
                     .pointerInput(
                         peaks, historyPoints, occludedIds, isSceneReady, viewportSize,
-                        skyline, weldedPeakIds, location, observerAlt, leaderPx
+                        skyline, weldedPeakIds, location, observerAlt, leaderPx, minSpacingPx
                     ) {
                         detectTapGestures { tap ->
                             nearestMarker(
                                 tap, controller, location, peaks, historyPoints,
                                 occludedIds, isSceneReady, hitRadiusPx, markerSizes,
-                                skyline, weldedPeakIds, observerAlt, leaderPx
+                                skyline, weldedPeakIds, observerAlt, leaderPx, minSpacingPx
                             )?.let { selectedMarker = it }
                         }
                     }
@@ -730,7 +734,8 @@ private fun nearestMarker(
     skyline: List<SkylineSample>,
     weldedPeakIds: Set<UUID>,
     observerAlt: Double,
-    leaderPx: Float
+    leaderPx: Float,
+    minSpacingPx: Float
 ): ArMarkerSelection? {
     var best: ArMarkerSelection? = null
     var bestDist = hitRadiusPx
@@ -756,7 +761,7 @@ private fun nearestMarker(
     if (view != null && viewport != null) {
         val drawn = weldedPeakLabels(
             controller, peaks, skyline, observerAlt,
-            cameraHeadingDeg(view) + controller.frameYawOffsetDeg, viewport
+            cameraHeadingDeg(view) + controller.frameYawOffsetDeg, viewport, minSpacingPx
         )
         for (label in drawn) {
             val target = Offset(label.pos.x, label.pos.y - leaderPx)
