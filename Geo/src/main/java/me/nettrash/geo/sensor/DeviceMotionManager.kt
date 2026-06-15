@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.atan2
 
 @Singleton
 class DeviceMotionManager @Inject constructor(
@@ -22,6 +23,25 @@ class DeviceMotionManager @Inject constructor(
 
     private val _heading = MutableStateFlow(0f)
     val heading: StateFlow<Float> = _heading.asStateFlow()
+
+    /**
+     * Azimuth (deg, 0 = N) of the direction the BACK CAMERA points — the bearing
+     * to use when the phone is held UPRIGHT (the AR Nature view), where the camera
+     * is aimed at the horizon.
+     *
+     * [heading] (above) is the azimuth of the phone's TOP edge (+Y axis), which is
+     * the right reading for a phone held FLAT like a traditional compass (the Info
+     * card). But when the phone is upright that +Y axis points at the sky, so its
+     * horizontal projection collapses and [heading] gimbal-locks — it ends up
+     * tracking roll, not bearing. The AR true-north correction fed off [heading]
+     * therefore mis-aligns the skyline and the N/E/S/W markers.
+     *
+     * This value instead reads the camera-forward axis (device −Z), which stays
+     * well-conditioned while the phone is vertical. Magnetic; callers add the local
+     * declination for a true heading, exactly as they do with [heading].
+     */
+    private val _cameraHeading = MutableStateFlow(0f)
+    val cameraHeading: StateFlow<Float> = _cameraHeading.asStateFlow()
 
     private val _pitch = MutableStateFlow(0f)
     val pitch: StateFlow<Float> = _pitch.asStateFlow()
@@ -81,6 +101,19 @@ class DeviceMotionManager @Inject constructor(
             _heading.value = (Math.round(azimuth) % 360).toFloat()
             _pitch.value = Math.toDegrees(orientationValues[1].toDouble()).toFloat()
             _roll.value = Math.toDegrees(orientationValues[2].toDouble()).toFloat()
+
+            // Camera-pointing azimuth for the upright AR pose. `rotationMatrix`
+            // maps device → world (ENU: X=East, Y=North, Z=Up) in row-major order,
+            // so its third column (indices 2,5,8) is the world image of the device
+            // +Z axis. The back camera looks along device −Z, so camera-forward in
+            // world = −(R[2], R[5], R[8]); its bearing is atan2(East, North) =
+            // atan2(−R[2], −R[5]). Robust while the phone is vertical (unlike the
+            // +Y azimuth above, which gimbal-locks there).
+            var camAzimuth = Math.toDegrees(
+                atan2((-rotationMatrix[2]).toDouble(), (-rotationMatrix[5]).toDouble())
+            ).toFloat()
+            if (camAzimuth < 0) camAzimuth += 360f
+            _cameraHeading.value = (Math.round(camAzimuth) % 360).toFloat()
         }
     }
 

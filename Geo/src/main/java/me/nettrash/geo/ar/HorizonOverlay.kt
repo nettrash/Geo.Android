@@ -24,11 +24,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -36,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.GeoCalculations
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -80,19 +84,11 @@ fun HorizonOverlay(
     val cam: FloatArray = cameraPosState ?: return
     val viewport: ArSceneController.IntSize = viewportState ?: return
 
-    // Compute the camera heading (degrees, 0 = N) from the inverse
-    // view matrix. ARCore uses a right-handed camera frame with the
-    // camera looking down −Z; the world-space forward vector is the
-    // negated Z column of the camera transform. The view matrix is
-    // the inverse of the camera transform, and for a rotation the
-    // inverse equals the transpose, so the forward vector is the
-    // negated third row of the view matrix.
-    val fwdX = -view[2]   // row 0, col 2 (camera-to-world east component)
-    val fwdZ = -view[10]  // row 2, col 2 (camera-to-world south component)
-    // In ARCore's east-up-(-)north frame, +X is east, −Z is north,
-    // so heading = atan2(east, north) → atan2(fwdX, -fwdZ).
-    var headingDeg = Math.toDegrees(kotlin.math.atan2(fwdX.toDouble(), (-fwdZ).toDouble()))
-    if (headingDeg < 0) headingDeg += 360.0
+    // Camera heading (degrees, 0 = N). The ARCore pose heading plus the
+    // true-north correction (ARCore isn't north-aligned) gives the device's TRUE
+    // heading, so the overlay's bearing window centres on true north — matching
+    // the placement, which projectToScreen rotates by the same correction.
+    val headingDeg = cameraHeadingDeg(view) + controller.frameYawOffsetDeg
 
     // No clamp to >= 0: a below-sea-level observer (Dead Sea, Death Valley) has a
     // real negative eye height, and the silhouette/labels must use it (matches
@@ -182,51 +178,14 @@ fun HorizonOverlay(
         }
     }
 
-    // Peak labels welded to the silhouette — only when a real skyline exists.
+    // Peak labels welded to the silhouette — the SAME selection the tap hit-test
+    // uses (shared [weldedPeakLabels]), so only drawn pills are ever tappable.
     val peakLabels = remember(skyline, view, cam, viewport, observerAlt, headingDeg, peaks) {
-        if (skyline.isEmpty()) {
-            emptyList()
-        } else {
-            val minSpacing = 104f   // wide enough that adjacent long-name pills don't overlap
-            val maxLabels = 10
-
-            data class Cand(val name: String, val altitude: Double, val pos: Offset, val distance: Double)
-            val cands = ArrayList<Cand>()
-            for (peak in peaks) {
-                // `peakOnSilhouette` (camera-independent) decides which peaks are
-                // on the ridge; the same predicate suppresses their duplicate AR
-                // markers in NatureScreen.
-                if (!peakOnSilhouette(peak, skyline, observerAlt)) continue
-                if (abs(angleDelta(peak.bearing, headingDeg)) > headingHalfWindowDeg) continue
-
-                val (skyDist, skyAlt) = interpolateSkyline(((peak.bearing % 360) + 360) % 360, skyline)
-                val theta = Math.toRadians(peak.bearing)
-                val east = skyDist * kotlin.math.sin(theta)
-                val north = skyDist * kotlin.math.cos(theta)
-                val up = (skyAlt - observerAlt) - (skyDist * skyDist) / (2.0 * GeoCalculations.EARTH_RADIUS)
-                val world = floatArrayOf(
-                    east.toFloat() + cam[0], up.toFloat() + cam[1], (-north).toFloat() + cam[2]
-                )
-                val screen = controller.projectToScreen(world) ?: continue
-                if (!screen.x.isFinite() || !screen.y.isFinite()) continue
-                if (screen.x < -200 || screen.x > viewport.width + 200 ||
-                    screen.y < -200 || screen.y > viewport.height + 200
-                ) continue
-                cands.add(Cand(peak.name, peak.altitude, screen, peak.distance))
-            }
-            // Nearer (more prominent) peaks first; keep those at least
-            // `minSpacing` apart horizontally, up to `maxLabels`.
-            cands.sortBy { it.distance }
-            val kept = ArrayList<Cand>()
-            for (c in cands) {
-                if (kept.all { abs(it.pos.x - c.pos.x) >= minSpacing }) {
-                    kept.add(c)
-                    if (kept.size >= maxLabels) break
-                }
-            }
-            kept
-        }
+        weldedPeakLabels(controller, peaks, skyline, observerAlt, headingDeg, viewport)
     }
+    // Leader length / pill-float in px, density-scaled from the shared dp so it
+    // matches iOS's points physically (not a raw 40px ≈ 13dp sliver).
+    val leaderPx = with(LocalDensity.current) { PEAK_LABEL_LEADER_DP.dp.toPx() }
 
     Box(modifier = modifier.fillMaxSize()) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -253,37 +212,65 @@ fun HorizonOverlay(
                     )
                 )
             }
+            // Leader line from each ridge anchor up to its floating pill, with a
+            // dot marking the exact silhouette point the label identifies.
+            for (label in peakLabels) {
+                drawLine(
+                    color = Color(0xFFFF9800).copy(alpha = 0.85f),
+                    start = label.pos,
+                    end = Offset(label.pos.x, label.pos.y - leaderPx),
+                    strokeWidth = 1.5f,
+                    cap = StrokeCap.Round
+                )
+                drawCircle(color = Color(0xFFFF9800), radius = 2.5f, center = label.pos)
+            }
         }
 
         for ((label, pos) in labels) {
             CardinalLabel(label, pos)
         }
         for (label in peakLabels) {
-            PeakLabel(label.name, label.altitude, label.pos)
+            PeakLabel(label.name, label.altitude, label.pos, leaderPx)
         }
     }
 }
 
-/** A named peak floated just above its ridge silhouette position. */
+/** A named peak floated above its ridge silhouette position, joined to it by a
+ *  leader line drawn on the Canvas. The pill's CENTRE sits at `pos − leaderPx`,
+ *  coinciding with the tap hit-test's target (matching iOS). */
 @Composable
-private fun PeakLabel(name: String, altitude: Double, position: Offset) {
+private fun PeakLabel(name: String, altitude: Double, position: Offset, leaderPx: Float) {
     var size by remember { mutableStateOf(IntSize.Zero) }
     Box(
         modifier = Modifier
             .offset {
-                // Centre horizontally on the ridge point and float just above it.
                 // Until measured (size 0) park it off-screen so it doesn't flash
                 // top-left for one frame.
                 if (size == IntSize.Zero) {
                     IntOffset(-10_000, -10_000)
                 } else {
+                    // Pin the pill's LEADING-edge centre (its lower tip, the
+                    // rotation pivot below) onto the leader-line top — the anchor
+                    // lifted by leaderPx. That edge sits at the layout left edge,
+                    // vertical middle, so the top-left goes to x = anchor.x,
+                    // y = (anchor.y − leaderPx) − height/2. The pill then leans up
+                    // off that pinned tip, and the leader line meets it there.
                     IntOffset(
-                        (position.x - size.width / 2f).toInt(),
-                        (position.y - size.height - 8).toInt()
+                        position.x.toInt(),
+                        (position.y - leaderPx - size.height / 2f).toInt()
                     )
                 }
             }
             .onSizeChanged { size = it }
+            // Rotate near-vertical about the LEADING-edge centre (0, 0.5) — the
+            // pill's lower tip — so it claims little HORIZONTAL room on a crowded
+            // ridge (the point — see [PEAK_LABEL_ROTATION_DEG]) while that tip stays
+            // pinned to the leader top (placed above). Draw-time transform: the
+            // measured size is unchanged, so the leader join and tap target hold.
+            .graphicsLayer {
+                rotationZ = PEAK_LABEL_ROTATION_DEG
+                transformOrigin = TransformOrigin(0f, 0.5f)
+            }
             .clip(RoundedCornerShape(10.dp))
             .background(Color.Black.copy(alpha = 0.6f))
             .border(0.75.dp, Color(0xFFFF9800).copy(alpha = 0.7f), RoundedCornerShape(10.dp))
@@ -333,6 +320,129 @@ fun peakOnSilhouette(peak: NearbyPeak, skyline: List<SkylineSample>, observerAlt
     val (skyDist, skyAlt) = interpolateSkyline(((peak.bearing % 360) + 360) % 360, skyline)
     val tol = Math.toRadians(1.5)
     return angle(peak.distance, peak.altitude) >= angle(skyDist, skyAlt) - tol
+}
+
+/**
+ * Vertical gap a welded peak pill's CENTRE floats above its ridge anchor, in
+ * **dp** (converted to px at each use site so the leader is the same physical
+ * length regardless of display density — and the same ~42 as iOS's points). A
+ * leader line bridges the gap so the name reads clearly off the silhouette.
+ * Shared by the renderer and the tap hit-test so the visible pill and its
+ * tappable target stay locked together. Mirrors iOS `peakHorizonLabelLift`.
+ */
+const val PEAK_LABEL_LEADER_DP = 42
+
+/**
+ * Degrees the welded peak pill is rotated (negative = counter-clockwise, so the
+ * name reads bottom-to-top, "growing" up off the ridge). Near-vertical (−75°)
+ * shrinks each pill's HORIZONTAL footprint to roughly half of the old flat pill,
+ * so a ridge crowded with summits keeps its neighbouring labels instead of the
+ * de-collision ([weldedPeakLabels] `minSpacing`) dropping them. The slight tilt
+ * off pure −90° reads a touch easier than dead vertical. Flip the sign to lean
+ * the other way. Android-only divergence from iOS (which keeps pills horizontal).
+ */
+const val PEAK_LABEL_ROTATION_DEG = -75f
+
+/**
+ * Camera heading (degrees, 0 = N) from the AR view matrix — the same derivation
+ * [HorizonOverlay] uses, exposed so the tap hit-test welds against the same
+ * labels the overlay drew.
+ */
+fun cameraHeadingDeg(view: FloatArray): Double {
+    val fwdX = -view[2]
+    val fwdZ = -view[10]
+    var deg = Math.toDegrees(kotlin.math.atan2(fwdX.toDouble(), (-fwdZ).toDouble()))
+    if (deg < 0) deg += 360.0
+    return deg
+}
+
+/**
+ * Screen position of the ridge silhouette point at [peak]'s bearing — the anchor
+ * the welded label floats above (by [PEAK_LABEL_LEADER_DP]). Shared by the
+ * renderer ([HorizonOverlay]) and the tap hit-test (NatureScreen) so the pill the
+ * user sees and the point the user taps are computed identically. Returns null if
+ * the camera isn't tracking or the point is behind the camera. Mirrors iOS
+ * `weldedLabelAnchor`.
+ */
+fun weldedLabelAnchor(
+    controller: ArSceneController,
+    peak: NearbyPeak,
+    skyline: List<SkylineSample>,
+    observerAlt: Double
+): Offset? {
+    if (skyline.isEmpty()) return null
+    val cam = controller.cameraPosition.value ?: return null
+    val (skyDist, skyAlt) = interpolateSkyline(((peak.bearing % 360) + 360) % 360, skyline)
+    val theta = Math.toRadians(peak.bearing)
+    val east = skyDist * kotlin.math.sin(theta)
+    val north = skyDist * kotlin.math.cos(theta)
+    val up = (skyAlt - observerAlt) - (skyDist * skyDist) / (2.0 * GeoCalculations.EARTH_RADIUS)
+    val world = floatArrayOf(
+        east.toFloat() + cam[0], up.toFloat() + cam[1], (-north).toFloat() + cam[2]
+    )
+    val screen = controller.projectToScreen(world) ?: return null
+    if (!screen.x.isFinite() || !screen.y.isFinite()) return null
+    return screen
+}
+
+/** A named-peak label welded to the silhouette: its peak [id] (for tap-back),
+ *  display [name] + [altitude], and the ridge-anchor screen point [pos]. */
+data class PeakLabelInfo(
+    val id: UUID,
+    val name: String,
+    val altitude: Double,
+    val pos: Offset
+)
+
+/**
+ * The named-peak labels actually welded to the silhouette this frame — the
+ * SINGLE source of truth for which pills are drawn, shared by the renderer
+ * ([HorizonOverlay]) and the tap hit-test (NatureScreen) so a tap can only ever
+ * resolve to a pill the user can actually see (no phantom targets, no
+ * nearer-vs-farther mix-up). Selection: peaks on/above the silhouette
+ * ([peakOnSilhouette]), within the heading window, whose ridge anchor projects
+ * on-screen; nearer peaks win when pills would overlap (kept >= minSpacing apart)
+ * and the count is capped. Mirrors iOS `weldedPeakLabels`.
+ */
+fun weldedPeakLabels(
+    controller: ArSceneController,
+    peaks: List<NearbyPeak>,
+    skyline: List<SkylineSample>,
+    observerAlt: Double,
+    headingDeg: Double,
+    viewport: ArSceneController.IntSize
+): List<PeakLabelInfo> {
+    if (skyline.isEmpty()) return emptyList()
+    val headingHalfWindowDeg = 110.0
+    // Pills are rotated near-vertical ([PEAK_LABEL_ROTATION_DEG]), so their
+    // horizontal footprint is ~halved vs the old flat pills — tighten the
+    // de-collision spacing and lift the cap to match, so a crowded ridge keeps
+    // ~2× more neighbouring summits rather than dropping them.
+    val minSpacing = 54f
+    val maxLabels = 16
+    val boundsMargin = 200f
+
+    data class Cand(val info: PeakLabelInfo, val distance: Double)
+    val cands = ArrayList<Cand>()
+    for (peak in peaks) {
+        if (!peakOnSilhouette(peak, skyline, observerAlt)) continue
+        if (abs(angleDelta(peak.bearing, headingDeg)) > headingHalfWindowDeg) continue
+        val screen = weldedLabelAnchor(controller, peak, skyline, observerAlt) ?: continue
+        if (screen.x < -boundsMargin || screen.x > viewport.width + boundsMargin ||
+            screen.y < -boundsMargin || screen.y > viewport.height + boundsMargin
+        ) continue
+        cands.add(Cand(PeakLabelInfo(peak.id, peak.name, peak.altitude, screen), peak.distance))
+    }
+    // Nearer (more prominent) peaks first; keep those >= minSpacing apart, capped.
+    cands.sortBy { it.distance }
+    val kept = ArrayList<PeakLabelInfo>()
+    for (c in cands) {
+        if (kept.all { abs(it.pos.x - c.info.pos.x) >= minSpacing }) {
+            kept.add(c.info)
+            if (kept.size >= maxLabels) break
+        }
+    }
+    return kept
 }
 
 private fun resolveBearing(

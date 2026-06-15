@@ -8,14 +8,38 @@ one recorded here.
 
 ## [Unreleased]
 
+### Fixed
+- **Nature (AR) overlay pointed the wrong way** — the skyline, peak markers and
+  cardinal labels were placed against ARCore's world frame, which (without the
+  Geospatial API) is aligned to **gravity only**, not true north — its yaw is
+  wherever the phone faced at session start. So the whole overlay was rotated off
+  reality, while iOS is correct because ARKit's `gravityAndHeading` frame is
+  magnetometer-aligned. Geo now measures the offset between the device's true
+  compass heading (rotation-vector azimuth + magnetic declination) and the ARCore
+  pose heading, and rotates every projected point by it in one place
+  (`projectToScreen`), so the overlay aligns with true north and the real horizon.
+  The correction is smoothed to reject magnetometer jitter; AR tracking is
+  unaffected (the offset is ~constant). Long-press the AR top bar to see the live
+  ARCore/compass/corrected headings under **heading (true-north align)**.
+
+### Changed
+- **History points are no longer shown in the AR (Nature) scene** — they cluttered
+  the camera view, so the AR overlay now shows only peaks and the skyline. Your
+  recorded history is unchanged and still appears on the Map and Stat tabs. (Also
+  drops their AR markers, tap targets, occlusion work and the on-screen counter.)
+
 ### Added
 - **Peak labels welded to the terrain skyline** — in the Nature (AR) view, named
   peaks that form the horizon silhouette now float their name + elevation ("Mont
   Blanc 4808 m") right on the green ridge line, turning the abstract skyline into
   an **identified panorama**. Each peak is matched to the silhouette by apparent
   elevation angle — so peaks hidden behind nearer, higher terrain are skipped —
-  and its label is welded to the ridge; nearer peaks win when labels would
-  overlap. Reuses the skyline + peak data already computed — no new network.
+  and its label floats just clear of the ridge, joined to the exact silhouette
+  point by a thin **leader line** (with a dot marking the spot) so the name reads
+  cleanly off the line; nearer peaks win when labels would overlap. Tapping a
+  floating label opens the peak's detail sheet — the tap target tracks the lifted
+  pill, not the ridge underneath it. Reuses the skyline + peak data already
+  computed — no new network.
 - **Summit log — auto-detect arrival at a known peak** — walk within ~500 m of a
   Seven Summit / Snow Leopard / other known peak and Geo offers to log the ascent
   (date, the peak's elevation, your measured barometric altitude, an optional note)

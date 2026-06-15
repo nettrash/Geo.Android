@@ -3,6 +3,7 @@ package me.nettrash.geo.ui.nature
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.GeomagneticField
 import android.hardware.SensorManager
 import android.net.Uri
 import android.provider.Settings
@@ -33,7 +34,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -87,8 +87,12 @@ import me.nettrash.geo.ar.ArOcclusionManager
 import me.nettrash.geo.ar.ArProjection
 import me.nettrash.geo.ar.ArSceneController
 import me.nettrash.geo.ar.HorizonOverlay
+import me.nettrash.geo.ar.PEAK_LABEL_LEADER_DP
 import me.nettrash.geo.ar.PanoramaCapture
+import me.nettrash.geo.ar.SkylineSample
+import me.nettrash.geo.ar.cameraHeadingDeg
 import me.nettrash.geo.ar.peakOnSilhouette
+import me.nettrash.geo.ar.weldedPeakLabels
 import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.GeoCalculations
@@ -148,8 +152,11 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
     val location by viewModel.locationManager.location.collectAsState()
     val peaks by viewModel.peaks.collectAsState()
-    val historyPoints by viewModel.arHistoryPoints.collectAsState()
-    val heading by viewModel.motionManager.heading.collectAsState()
+    // AR holds the phone UPRIGHT (camera at the horizon), so use the camera-axis
+    // azimuth, not the flat top-edge `heading` (that one gimbal-locks when the
+    // phone is vertical, which mis-aligned the skyline and the N/E/S/W markers).
+    // The Info compass, held flat, still uses `heading`. See DeviceMotionManager.
+    val heading by viewModel.motionManager.cameraHeading.collectAsState()
 
     // Overlay anchor with 5 m hysteresis: the marker/horizon
     // projection is fed THIS rather than the raw `location` so GPS
@@ -220,7 +227,6 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         while (true) {
             val loc = viewModel.locationManager.location.value
             val currentPeaks = viewModel.peaks.value
-            val currentHistory = viewModel.arHistoryPoints.value
             if (loc != null) {
                 val distantPeakCount = currentPeaks.count { it.distance > 500 }
                 val outdoorByAccuracy = loc.accuracy > 25f
@@ -246,24 +252,8 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                             )
                         }
                     }
-                    for (point in currentHistory) {
-                        val enu = GeoCalculations.gpsToENU(
-                            loc.latitude, loc.longitude, loc.altitude,
-                            point.latitude, point.longitude, point.gpsAltitude
-                        )
-                        controller.cameraPosition.value?.let { cam ->
-                            add(
-                                ArOcclusionManager.OcclusionTarget(
-                                    id = point.id,
-                                    worldPosition = floatArrayOf(
-                                        enu.east.toFloat() + cam[0],
-                                        enu.up.toFloat() + cam[1],
-                                        (-enu.north).toFloat() + cam[2]
-                                    )
-                                )
-                            )
-                        }
-                    }
+                    // History points are not shown in the AR scene, so they need
+                    // no occlusion targets.
                 }
                 if (targets.isNotEmpty()) {
                     viewModel.occlusionManager.check(targets, controller)
@@ -302,7 +292,9 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 controller = controller,
                 location = overlayLocation,
                 peaks = peaks,
-                historyPoints = historyPoints,
+                // History points are intentionally not shown in the AR scene;
+                // they remain on the Map and Stat tabs.
+                historyPoints = emptyList(),
                 heading = heading,
                 isARActive = isARActive,
                 viewModel = viewModel
@@ -333,15 +325,35 @@ private fun ArScene(
     val isSceneReady by viewModel.occlusionManager.isSceneReady.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
 
+    // Observer eye altitude — barometer (already pre-filtered to > 0) preferred,
+    // else GPS. No clamp to >= 0 (below-sea-level observers are real). Shared by
+    // the welded-peak filter and the tap hit-test so both agree with the overlay.
+    val observerAlt = if (barometerHeight > 0) barometerHeight else (location?.altitude ?: 0.0)
+
+    // True-north alignment: ARCore's world frame isn't north-aligned, so feed the
+    // controller the device's TRUE compass heading (magnetic azimuth corrected by
+    // the local declination, exactly as the Info compass does). The controller
+    // diff's it against the ARCore pose heading each frame and rotates the overlay
+    // into true-north alignment.
+    val declination = remember(location?.latitude, location?.longitude, location?.altitude) {
+        val loc = location
+        if (loc != null && !(loc.latitude == 0.0 && loc.longitude == 0.0)) {
+            GeomagneticField(
+                loc.latitude.toFloat(), loc.longitude.toFloat(), loc.altitude.toFloat(),
+                System.currentTimeMillis()
+            ).declination
+        } else 0f
+    }
+    val trueHeading = (((heading + declination) % 360f) + 360f) % 360f
+    LaunchedEffect(trueHeading) { controller.setCompassTrueHeading(trueHeading) }
+
     // Peaks welded to the skyline ridge — their AR markers are suppressed so a
     // peak shows EITHER a ridge label OR a marker (matches the horizon overlay).
     val weldedPeakIds = remember(peaks, skyline, location, barometerHeight) {
-        val loc = location
-        if (loc == null || skyline.isEmpty()) {
+        if (location == null || skyline.isEmpty()) {
             emptySet()
         } else {
-            val obsAlt = if (barometerHeight > 0) barometerHeight else loc.altitude
-            peaks.filter { peakOnSilhouette(it, skyline, obsAlt) }.map { it.id }.toSet()
+            peaks.filter { peakOnSilhouette(it, skyline, observerAlt) }.map { it.id }.toSet()
         }
     }
 
@@ -356,6 +368,9 @@ private fun ArScene(
     // Filament camera surface is captured separately via PixelCopy.
     val overlayLayer = rememberGraphicsLayer()
     val hitRadiusPx = with(density) { 56.dp.toPx() }
+    // Welded-pill leader length in px (same dp as the overlay), so the hit-test
+    // targets the pill centre the overlay drew.
+    val leaderPx = with(density) { PEAK_LABEL_LEADER_DP.dp.toPx() }
     // Measured marker sizes (id → px). Markers are TOP-LEFT-anchored on their
     // projected point, so the hit-test offsets by half the measured size to
     // compare against the visual CENTRE (matching iOS's center anchor).
@@ -484,11 +499,15 @@ private fun ArScene(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(peaks, historyPoints, occludedIds, isSceneReady, viewportSize) {
+                    .pointerInput(
+                        peaks, historyPoints, occludedIds, isSceneReady, viewportSize,
+                        skyline, weldedPeakIds, location, observerAlt, leaderPx
+                    ) {
                         detectTapGestures { tap ->
                             nearestMarker(
                                 tap, controller, location, peaks, historyPoints,
-                                occludedIds, isSceneReady, hitRadiusPx, markerSizes
+                                occludedIds, isSceneReady, hitRadiusPx, markerSizes,
+                                skyline, weldedPeakIds, observerAlt, leaderPx
                             )?.let { selectedMarker = it }
                         }
                     }
@@ -545,19 +564,11 @@ private fun ArScene(
                 it.id !in occludedIds &&
                     (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
             }
-            val visibleHistory = historyPoints.count {
-                it.id !in occludedIds &&
-                    (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
-            }
 
             Icon(Icons.Default.Terrain, null, tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
             Text("$visiblePeaks", color = Color.White, fontSize = 14.sp)
-            Spacer(Modifier.width(12.dp))
-
-            Icon(Icons.Default.LocationOn, null, tint = Color.Cyan, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("$visibleHistory", color = Color.White, fontSize = 14.sp)
+            // History points are no longer shown in the AR scene.
 
             // "Scanning" while the AR camera isn't tracking yet OR the
             // scene-ready warm-up gate (Improvement #20) hasn't lifted.
@@ -715,7 +726,11 @@ private fun nearestMarker(
     occludedIds: Set<UUID>,
     isSceneReady: Boolean,
     hitRadiusPx: Float,
-    markerSizes: Map<UUID, IntSize>
+    markerSizes: Map<UUID, IntSize>,
+    skyline: List<SkylineSample>,
+    weldedPeakIds: Set<UUID>,
+    observerAlt: Double,
+    leaderPx: Float
 ): ArMarkerSelection? {
     var best: ArMarkerSelection? = null
     var bestDist = hitRadiusPx
@@ -732,7 +747,29 @@ private fun nearestMarker(
         return hypot((cx - tap.x).toDouble(), (cy - tap.y).toDouble()).toFloat()
     }
 
+    // Welded peaks are drawn as floating ridge pills, not AR markers. Test ONLY
+    // the labels actually drawn (the same dedup'd/capped selection the overlay
+    // renders) so a tap can't hit a suppressed-pill peak or resolve to a
+    // nearer/farther mix-up; target the pill centre (anchor lifted by leaderPx).
+    val view = controller.viewMatrix.value
+    val viewport = controller.viewportSize.value
+    if (view != null && viewport != null) {
+        val drawn = weldedPeakLabels(
+            controller, peaks, skyline, observerAlt,
+            cameraHeadingDeg(view) + controller.frameYawOffsetDeg, viewport
+        )
+        for (label in drawn) {
+            val target = Offset(label.pos.x, label.pos.y - leaderPx)
+            val d = hypot((target.x - tap.x).toDouble(), (target.y - tap.y).toDouble()).toFloat()
+            if (d <= bestDist) {
+                val peak = peaks.firstOrNull { it.id == label.id } ?: continue
+                bestDist = d; best = ArMarkerSelection.Peak(peak)
+            }
+        }
+    }
+    // Non-welded peaks keep their AR marker (welded ones are suppressed there).
     for (peak in peaks) {
+        if (peak.id in weldedPeakIds) continue
         if (!visible(peak.id, peak.distance)) continue
         val off = ArProjection.projectGps(
             controller, userLocation, peak.latitude, peak.longitude, peak.altitude

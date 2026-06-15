@@ -227,6 +227,18 @@ class LocationManager @Inject constructor(
 
     private fun refreshClosestMountain(loc: Location) {
         val data = mountainsData ?: return
+
+        // Highest = first of the pre-sorted seven-summits list (mirrors iOS).
+        // Set here, on every fix, rather than ONLY in startLocationUpdates():
+        // that one assignment sits behind `if (isSubscribed) return` and needs
+        // mountainsData to be loaded at subscribe time, so if the process-
+        // lifecycle observer subscribes before the ViewModel loads the data,
+        // _highestMountain would stay null forever while _closestMountain (set
+        // below) populates fine — leaving the highest card with no bearing arrow.
+        if (_highestMountain.value == null) {
+            _highestMountain.value = data.sevenPeaks?.mountains?.firstOrNull()
+        }
+
         val allMountains = mutableListOf<MountainInfo>()
         data.highest?.mountains?.let { allMountains.addAll(it) }
         data.sevenPeaks?.mountains?.let { allMountains.addAll(it) }

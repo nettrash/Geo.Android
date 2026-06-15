@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import me.nettrash.geo.ar.ArOcclusionManager
 import me.nettrash.geo.ar.ArSceneController
 import me.nettrash.geo.ar.SkylineCalculator
+import me.nettrash.geo.ar.cameraHeadingDeg
 import java.util.Locale
 
 /**
@@ -52,6 +53,7 @@ fun ArDiagnosticsOverlay(
     val isTracking by controller.isTracking.collectAsState()
     val viewport by controller.viewportSize.collectAsState()
     val cameraPos by controller.cameraPosition.collectAsState()
+    val viewMatrix by controller.viewMatrix.collectAsState()
     val planes by controller.verticalPlanes.collectAsState()
     val depthSnapshot by controller.depthSnapshot.collectAsState()
     val isDepthSupported by controller.isDepthSupported.collectAsState()
@@ -88,6 +90,20 @@ fun ArDiagnosticsOverlay(
             Row2("camera (m)",
                 cameraPos?.let {
                     String.format(Locale.US, "%.1f, %.1f, %.1f", it[0], it[1], it[2])
+                } ?: "—")
+
+            Spacer(Modifier.height(6.dp))
+            Section("heading (true-north align)")
+            val arPose = viewMatrix?.let { cameraHeadingDeg(it) }
+            val northOffset = controller.frameYawOffsetDeg
+            // The ARCore pose heading (frame-relative), the compass-derived
+            // correction, and the resulting TRUE heading the overlay is drawn at.
+            // Point at a known direction: "corrected" should match a real compass.
+            Row2("ar pose", arPose?.let { String.format(Locale.US, "%.0f°", it) } ?: "—")
+            Row2("north offset", String.format(Locale.US, "%+.0f°", northOffset))
+            Row2("corrected (true)",
+                arPose?.let {
+                    String.format(Locale.US, "%.0f°", (((it + northOffset) % 360 + 360) % 360))
                 } ?: "—")
 
             Spacer(Modifier.height(6.dp))
