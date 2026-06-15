@@ -85,7 +85,7 @@ object PanoramaCapture {
             true
         }
     } catch (t: Throwable) {
-        AppLog.ar.warn("Summit card share failed", t)
+        AppLog.ar.warn("Bitmap share failed", t)
         false
     }
 

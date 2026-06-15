@@ -15,6 +15,7 @@ import android.text.TextUtils
 import me.nettrash.geo.data.db.SummitLog
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 
 /**
  * Renders a shareable "summit card" Bitmap for a [SummitLog] — peak name,
@@ -56,7 +57,7 @@ object SummitShareCard {
             color = orange; textSize = 13f * d; textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
-        canvas.drawText(setLabelText(log.peakSet).uppercase(), cx, y, setLabel)
+        canvas.drawText(setLabelText(log.peakSet).uppercase(Locale.ROOT), cx, y, setLabel)
         y += 36f * d
 
         // Peak name (centred, up to 2 lines, ellipsised).
