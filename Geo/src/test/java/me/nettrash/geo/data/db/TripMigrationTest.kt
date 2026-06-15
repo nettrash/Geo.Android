@@ -61,7 +61,11 @@ class TripMigrationTest {
         // 2. Open via Room with the migrations registered → runs 2->3 and
         //    validates the resulting schema against the entities.
         val db = Room.databaseBuilder(context, GeoDatabase::class.java, dbName)
-            .addMigrations(GeoDatabase.MIGRATION_1_2, GeoDatabase.MIGRATION_2_3)
+            .addMigrations(
+                GeoDatabase.MIGRATION_1_2,
+                GeoDatabase.MIGRATION_2_3,
+                GeoDatabase.MIGRATION_3_4
+            )
             .build()
 
         // 3. Existing history survived the migration.

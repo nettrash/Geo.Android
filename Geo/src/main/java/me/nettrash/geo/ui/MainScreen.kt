@@ -16,9 +16,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -126,4 +132,49 @@ fun MainScreen(viewModel: GeoViewModel = hiltViewModel()) {
             }
         }
     }
+
+    // Summit-log proximity prompt — app-wide, over any tab.
+    SummitProximityPrompt(viewModel)
+}
+
+/**
+ * "You're near {peak} — log this ascent?" prompt, shown when the user is close
+ * to a known peak (driven by [GeoViewModel.nearbyUnloggedPeak]). Manual confirm
+ * only; dismissing suppresses re-prompting until the user re-approaches.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun SummitProximityPrompt(viewModel: GeoViewModel) {
+    val candidate by viewModel.nearbyUnloggedPeak.collectAsState()
+    val peak = candidate ?: return
+    var note by remember(peak.peakIdentifier) { mutableStateOf("") }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { viewModel.dismissNearbySummit() },
+        title = {
+            Text(stringResource(R.string.summit_near_title, peak.peak.name ?: ""))
+        },
+        text = {
+            androidx.compose.foundation.layout.Column {
+                Text(stringResource(R.string.summit_near_message), fontSize = 13.sp)
+                androidx.compose.foundation.layout.Spacer(Modifier.height(10.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text(stringResource(R.string.summit_note)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { viewModel.logSummit(note) }) {
+                Text(stringResource(R.string.summit_log))
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { viewModel.dismissNearbySummit() }) {
+                Text(stringResource(R.string.summit_not_now))
+            }
+        }
+    )
 }

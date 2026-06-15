@@ -91,6 +91,24 @@
     <string name="clear_history_title">Clear history?</string>
     <string name="clear_history_message">This permanently deletes all recorded history and cannot be undone.</string>
 
+    <!-- Summit log (auto-detect arrival at a known peak) -->
+    <string name="section_summits">SUMMITS</string>
+    <string name="summit_empty">No summits logged yet — when you reach a known peak, Geo offers to log it here.</string>
+    <string name="summit_log">Log ascent</string>
+    <string name="summit_not_now">Not now</string>
+    <string name="summit_near_title">Near %1$s</string>
+    <string name="summit_near_message">Log this ascent? Your altitude is the barometric reading — approximate unless calibrated. Only the peak\'s public location is stored, not yours.</string>
+    <string name="summit_your_altitude">Your altitude</string>
+    <string name="summit_elevation">Elevation</string>
+    <string name="summit_logged">Logged</string>
+    <string name="summit_collection">Collection</string>
+    <string name="summit_note">Note</string>
+    <string name="summit_set_seven">Seven Summits</string>
+    <string name="summit_set_snow_leopard">Snow Leopard</string>
+    <string name="summit_set_highest">Highest peaks</string>
+    <string name="summit_set_peak">Peak</string>
+    <string name="action_share">Share</string>
+
     <!-- Trip Recorder (M5c) -->
     <string name="section_trips">TRIPS</string>
     <string name="trip_start">Start trip</string>
