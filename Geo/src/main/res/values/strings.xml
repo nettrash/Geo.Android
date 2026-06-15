@@ -151,7 +151,10 @@
     <string name="ar_gps_altitude">GPS altitude</string>
     <string name="ar_bar_altitude">Barometric altitude</string>
     <string name="ar_share_title">Share panorama</string>
-    <string name="ar_share_marked">%1$d marked</string>
+    <plurals name="ar_share_markers">
+        <item quantity="one">%1$d marker</item>
+        <item quantity="other">%1$d markers</item>
+    </plurals>
 
     <!-- Permission banner (location / motion) -->
     <string name="permissions_banner_headline_both">Location &amp; motion access required</string>

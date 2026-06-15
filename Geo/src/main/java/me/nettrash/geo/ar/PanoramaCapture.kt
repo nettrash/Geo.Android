@@ -1,5 +1,6 @@
 package me.nettrash.geo.ar
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -78,10 +79,16 @@ object PanoramaCapture {
         if (w <= 0 || h <= 0) return null
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         return suspendCancellableCoroutine { cont ->
+            // If the capture coroutine is cancelled (e.g. the AR tab leaves
+            // composition) while PixelCopy is in flight, free the bitmap. A
+            // late `cont.resume(...)` from the callback is a harmless no-op on a
+            // cancelled continuation, but the bitmap would otherwise leak.
+            cont.invokeOnCancellation { bmp.recycle() }
             try {
                 PixelCopy.request(
                     view, bmp,
                     { result ->
+                        if (!cont.isActive) return@request
                         if (result == PixelCopy.SUCCESS) {
                             cont.resume(bmp)
                         } else {
@@ -95,7 +102,7 @@ object PanoramaCapture {
             } catch (t: Throwable) {
                 AppLog.ar.warn("PixelCopy request failed", t)
                 bmp.recycle()
-                cont.resume(null)
+                if (cont.isActive) cont.resume(null)
             }
         }
     }
@@ -148,7 +155,8 @@ object PanoramaCapture {
 
         if (markerCount > 0) {
             val x = titleX + title.measureText("Geo") + 10f * d
-            canvas.drawText(context.getString(R.string.ar_share_marked, markerCount), x, baseline, sub)
+            val label = context.resources.getQuantityString(R.plurals.ar_share_markers, markerCount, markerCount)
+            canvas.drawText(label, x, baseline, sub)
         }
 
         val now = Date()
@@ -159,7 +167,15 @@ object PanoramaCapture {
 
     private fun writePng(context: Context, bmp: Bitmap): Uri? = try {
         val dir = File(context.cacheDir, "shared").apply { mkdirs() }
-        val file = File(dir, "geo-panorama.png")
+        // Prune panoramas older than an hour so cacheDir doesn't grow without
+        // bound. A file a share target is still reading is always fresh, so this
+        // can't delete an in-flight share.
+        val cutoff = System.currentTimeMillis() - 3_600_000L
+        dir.listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
+        // Unique name per capture: a rapid re-capture must not overwrite a file
+        // the previous share is still reading, and targets that cache by
+        // URI/filename would otherwise show a stale image.
+        val file = File(dir, "geo-panorama-${System.currentTimeMillis()}.png")
         FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     } catch (t: Throwable) {
@@ -171,6 +187,10 @@ object PanoramaCapture {
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
             putExtra(Intent.EXTRA_STREAM, uri)
+            // Also set clipData so the temporary read grant propagates reliably
+            // to the chosen target across Android versions/OEMs (FLAG alone
+            // isn't always sufficient through the chooser).
+            clipData = ClipData.newUri(context.contentResolver, "Geo panorama", uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(send, context.getString(R.string.ar_share_title)))
