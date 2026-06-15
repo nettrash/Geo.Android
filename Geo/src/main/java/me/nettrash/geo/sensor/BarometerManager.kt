@@ -84,7 +84,10 @@ class BarometerManager @Inject constructor(
         val pressureKpa = (pressureHpa / 10.0).coerceIn(30.0, 110.0)
         _pressure.value = pressureKpa
 
-        val qnhHpa = qnhRepository.qnhHpa.value
+        // Calibration-aware QNH: the manual "I am at X m" reference
+        // (decaying toward the network QNH over its window) when set,
+        // otherwise the plain network QNH (or null → lapse fallback).
+        val qnhHpa = qnhRepository.effectiveQnhHpa(System.currentTimeMillis())
         val altitude: Double = if (qnhHpa != null) {
             // Calibrated path. SensorManager.getAltitude implements
             // `44 330 * (1 − (p / p0)^(1/5.255))` — the standard

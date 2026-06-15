@@ -43,6 +43,9 @@ import androidx.compose.ui.text.font.FontWeight
 import me.nettrash.geo.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import me.nettrash.geo.data.db.Trip
 import me.nettrash.geo.data.model.GraphLine
@@ -241,11 +244,17 @@ private fun TripsSection(viewModel: GeoViewModel) {
 
     val start = startedAt
     if (start != null) {
+        val lifecycleOwner = LocalLifecycleOwner.current
         var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-        LaunchedEffect(start) {
-            while (true) {
-                now = System.currentTimeMillis()
-                delay(1000)
+        // Tick only while foreground-resumed; the recording's true start time is
+        // persisted, so the elapsed value is recomputed correctly on resume
+        // without waking the CPU every second in the background.
+        LaunchedEffect(start, lifecycleOwner) {
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    now = System.currentTimeMillis()
+                    delay(1000)
+                }
             }
         }
         Text(

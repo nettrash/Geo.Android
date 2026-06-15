@@ -8,6 +8,7 @@ import android.hardware.SensorManager
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
 import androidx.hilt.work.HiltWorker
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -87,7 +88,10 @@ class BarometerRefreshWorker @AssistedInject constructor(
         // fall back to the standard-atmosphere reference when none is
         // available. This keeps background/widget/history altitude in
         // agreement with the app and with iOS's calibrated path.
-        val qnhHpa = qnhRepository.lastKnownQnhHpa()
+        // Calibration-aware QNH (manual "I am at X m" pin if set, else the
+        // last-known network QNH) so the widget/history altitude matches the
+        // calibrated foreground readout.
+        val qnhHpa = qnhRepository.effectiveQnhHpaNow(System.currentTimeMillis())
         val altitude: Double = if (qnhHpa != null) {
             SensorManager.getAltitude(qnhHpa.toFloat(), (pressureKpa * 10.0).toFloat()).toDouble()
         } else {
@@ -167,13 +171,23 @@ class BarometerRefreshWorker @AssistedInject constructor(
         private const val WORK_NAME = "barometer_refresh"
 
         fun schedule(context: Context) {
+            // Don't run the periodic widget/storm sample when the battery is
+            // low — a 15-minute background sensor+widget tick isn't worth
+            // deepening a low battery, and the widget can show a staleness cue
+            // until the next opportunity.
+            val constraints = Constraints.Builder()
+                .setRequiresBatteryNotLow(true)
+                .build()
+
             val request = PeriodicWorkRequestBuilder<BarometerRefreshWorker>(
                 15, TimeUnit.MINUTES
-            ).build()
+            ).setConstraints(constraints).build()
 
+            // UPDATE (not KEEP) so an existing install picks up the new
+            // constraint instead of clinging to the unconstrained schedule.
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                ExistingPeriodicWorkPolicy.UPDATE,
                 request
             )
         }

@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import me.nettrash.geo.ar.TerrainElevationService
+import me.nettrash.geo.sensor.Atmosphere
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -74,8 +75,22 @@ class QnhRepository @Inject constructor(
     private val _hasAbsoluteFix = MutableStateFlow(false)
     val hasAbsoluteFix: StateFlow<Boolean> = _hasAbsoluteFix.asStateFlow()
 
+    // ── Manual "I am at X m" calibration (M5b) ───────────────────
+
+    /** A manual calibration: the back-solved sea-level reference (QNH, hPa)
+     *  and the time it was set. Its influence decays to zero over
+     *  [me.nettrash.geo.sensor.Atmosphere.CALIBRATION_DECAY_HOURS]. */
+    data class Calibration(val qnhHpa: Double, val calibratedAtMs: Long)
+
+    private val calStore = me.nettrash.geo.util.AltitudeCalibrationStore(context)
+    private val _calibration = MutableStateFlow<Calibration?>(null)
+    val calibration: StateFlow<Calibration?> = _calibration.asStateFlow()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fetchLock = Mutex()
+    /** Serializes calibration persistence so a rapid calibrate→clear can't
+     *  land out of order (see [persistCalibration]). */
+    private val persistMutex = Mutex()
 
     private val json = Json { ignoreUnknownKeys = true }
     private val client = OkHttpClient.Builder()
@@ -105,6 +120,18 @@ class QnhRepository @Inject constructor(
     private var lastFetchAtMs: Long = 0L
 
     init {
+        // Restore a persisted manual calibration so an "I am at X m" pin
+        // survives a cold start / offline session. Seed atomically and only
+        // while still null: if the user sets a fresh calibration during this
+        // async DataStore read, compareAndSet leaves the newer value untouched
+        // instead of clobbering it with the older persisted one (mirrors the
+        // _qnhHpa seed guard below).
+        scope.launch {
+            calStore.read()?.let {
+                _calibration.compareAndSet(null, Calibration(it.qnhHpa, it.calibratedAtMs))
+            }
+        }
+
         // Seed in-memory state from the last persisted fetch (with a
         // staleness check) so the very first barometer sample after a
         // cold start, and every offline session, can already calibrate.
@@ -140,6 +167,69 @@ class QnhRepository @Inject constructor(
         val persisted = store.read() ?: return null
         val age = System.currentTimeMillis() - persisted.fetchAtMs
         return if (age in 0..staleAfterMs) persisted.qnhHpa else null
+    }
+
+    /** Back-solve the QNH from a known elevation + the live RAW station
+     *  pressure (kPa) and persist it as a manual calibration. */
+    fun calibrate(knownAltitudeM: Double, livePressureKpa: Double) {
+        val qnhHpa = Atmosphere.solveReferencePressure(knownAltitudeM, livePressureKpa) * 10.0
+        val now = System.currentTimeMillis()
+        _calibration.value = Calibration(qnhHpa, now)
+        persistCalibration()
+    }
+
+    fun clearCalibration() {
+        _calibration.value = null
+        persistCalibration()
+    }
+
+    /**
+     * Persist whatever [_calibration] currently holds, serialized under
+     * [persistMutex]. The job reads the latest in-memory value at execution
+     * time rather than capturing it at call time, so even if a rapid
+     * calibrate→clear (or vice versa) dispatches the two jobs out of order,
+     * the last one to run writes the final state and the user's last action
+     * deterministically wins — no stale calibration is left on disk for
+     * [effectiveQnhHpaNow]/init to reload.
+     */
+    private fun persistCalibration() {
+        scope.launch {
+            persistMutex.withLock {
+                when (val cal = _calibration.value) {
+                    null -> calStore.clear()
+                    else -> calStore.write(cal.qnhHpa, cal.calibratedAtMs)
+                }
+            }
+        }
+    }
+
+    /** True while a manual calibration is set and not yet fully decayed. */
+    fun isCalibrated(nowMs: Long): Boolean {
+        val cal = _calibration.value ?: return false
+        return Atmosphere.calibrationWeight((nowMs - cal.calibratedAtMs) / 1000.0) > 0.0
+    }
+
+    /** Calibration-aware effective QNH (hPa) for the foreground path: the
+     *  manual QNH decaying toward the network QNH (or standard) over the
+     *  decay window, or the plain network QNH when uncalibrated/expired.
+     *  `null` ⇒ no reference at all (caller uses the lapse fallback). */
+    fun effectiveQnhHpa(nowMs: Long): Double? = blendCalibration(_qnhHpa.value, nowMs)
+
+    /** Suspend variant for the background worker: reads the calibration from
+     *  the store if the in-memory value hasn't seeded yet (fresh process). */
+    suspend fun effectiveQnhHpaNow(nowMs: Long): Double? {
+        if (_calibration.value == null) {
+            calStore.read()?.let { _calibration.value = Calibration(it.qnhHpa, it.calibratedAtMs) }
+        }
+        return blendCalibration(lastKnownQnhHpa(), nowMs)
+    }
+
+    private fun blendCalibration(networkHpa: Double?, nowMs: Long): Double? {
+        val cal = _calibration.value ?: return networkHpa
+        val weight = Atmosphere.calibrationWeight((nowMs - cal.calibratedAtMs) / 1000.0)
+        if (weight <= 0.0) return networkHpa
+        val baseline = networkHpa ?: (Atmosphere.SEA_LEVEL_KPA * 10.0)   // 1013.25 hPa
+        return baseline + (cal.qnhHpa - baseline) * weight
     }
 
     /**

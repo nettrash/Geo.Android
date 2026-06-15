@@ -42,7 +42,18 @@
     <string name="field_mountain">Mountain</string>
     <string name="field_percent_everest" formatted="false">% Everest</string>
     <string name="field_calibrating">calibrating…</string>
+    <string name="field_calibrated">calibrated</string>
     <string name="field_trend">3 h trend</string>
+
+    <!-- Known-elevation manual calibration (M5b) -->
+    <string name="calibrate_action">Calibrate altitude</string>
+    <string name="calibrate_recalibrate">Recalibrate altitude</string>
+    <string name="calibrate_title">Calibrate altitude</string>
+    <string name="calibrate_message">Pin the altimeter to a known elevation (a trailhead or summit marker) for instant, weather-proof, offline accuracy. The calibration decays over ~6 h as weather drifts.</string>
+    <string name="calibrate_current">Current altitude: %1$d m</string>
+    <string name="calibrate_field_label">I am at (m)</string>
+    <string name="calibrate_clear">Clear calibration</string>
+    <string name="calibrate_waiting">Waiting for a barometer reading…</string>
     <string name="field_height">Height</string>
     <string name="field_region">Region</string>
 
