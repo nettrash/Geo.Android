@@ -88,6 +88,9 @@ class QnhRepository @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fetchLock = Mutex()
+    /** Serializes calibration persistence so a rapid calibrate→clear can't
+     *  land out of order (see [persistCalibration]). */
+    private val persistMutex = Mutex()
 
     private val json = Json { ignoreUnknownKeys = true }
     private val client = OkHttpClient.Builder()
@@ -118,9 +121,15 @@ class QnhRepository @Inject constructor(
 
     init {
         // Restore a persisted manual calibration so an "I am at X m" pin
-        // survives a cold start / offline session.
+        // survives a cold start / offline session. Seed atomically and only
+        // while still null: if the user sets a fresh calibration during this
+        // async DataStore read, compareAndSet leaves the newer value untouched
+        // instead of clobbering it with the older persisted one (mirrors the
+        // _qnhHpa seed guard below).
         scope.launch {
-            calStore.read()?.let { _calibration.value = Calibration(it.qnhHpa, it.calibratedAtMs) }
+            calStore.read()?.let {
+                _calibration.compareAndSet(null, Calibration(it.qnhHpa, it.calibratedAtMs))
+            }
         }
 
         // Seed in-memory state from the last persisted fetch (with a
@@ -166,12 +175,32 @@ class QnhRepository @Inject constructor(
         val qnhHpa = Atmosphere.solveReferencePressure(knownAltitudeM, livePressureKpa) * 10.0
         val now = System.currentTimeMillis()
         _calibration.value = Calibration(qnhHpa, now)
-        scope.launch { calStore.write(qnhHpa, now) }
+        persistCalibration()
     }
 
     fun clearCalibration() {
         _calibration.value = null
-        scope.launch { calStore.clear() }
+        persistCalibration()
+    }
+
+    /**
+     * Persist whatever [_calibration] currently holds, serialized under
+     * [persistMutex]. The job reads the latest in-memory value at execution
+     * time rather than capturing it at call time, so even if a rapid
+     * calibrate→clear (or vice versa) dispatches the two jobs out of order,
+     * the last one to run writes the final state and the user's last action
+     * deterministically wins — no stale calibration is left on disk for
+     * [effectiveQnhHpaNow]/init to reload.
+     */
+    private fun persistCalibration() {
+        scope.launch {
+            persistMutex.withLock {
+                when (val cal = _calibration.value) {
+                    null -> calStore.clear()
+                    else -> calStore.write(cal.qnhHpa, cal.calibratedAtMs)
+                }
+            }
+        }
     }
 
     /** True while a manual calibration is set and not yet fully decayed. */
