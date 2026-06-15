@@ -19,19 +19,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,9 +50,14 @@ import androidx.compose.ui.res.stringResource
 import me.nettrash.geo.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import me.nettrash.geo.sensor.DeviceMotionManager
 import me.nettrash.geo.sensor.PressureTrendClass
 import me.nettrash.geo.ui.GeoViewModel
@@ -67,14 +77,38 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val hasAbsoluteFix by viewModel.barometerManager.hasAbsoluteFix.collectAsState()
     val pressureTrend by viewModel.pressureTrend.collectAsState()
 
+    // Manual altitude calibration (M5b) — drives the barometer-card badge.
+    val altitudeCalibration by viewModel.altitudeCalibration.collectAsState()
+    val isCalibrated = altitudeCalibration != null &&
+        viewModel.isAltitudeCalibrated(System.currentTimeMillis())
+    var showCalibrateDialog by remember { mutableStateOf(false) }
+
     // Recompute the de-trended trend chip when the Info tab is shown.
     LaunchedEffect(Unit) { viewModel.refreshIfNeeded() }
 
-    // Run the compass only while the Info tab is visible (low-power, AR-free
-    // peak direction finder). start()/stop() are idempotent.
-    DisposableEffect(Unit) {
-        viewModel.motionManager.start()
-        onDispose { viewModel.motionManager.stop() }
+    // Run the compass ONLY while the Info tab is visible AND the app is
+    // foreground-resumed. A bare DisposableEffect tracks composition, not the
+    // app lifecycle — so when the app is backgrounded while sitting on this
+    // tab the composable stays composed, onDispose never fires, and the
+    // rotation-vector sensor (which keeps the accelerometer/gyroscope/
+    // magnetometer powered) would run all night and flatten the battery.
+    // Gate on the lifecycle instead: start on ON_RESUME, stop on ON_PAUSE,
+    // and stop again on dispose (tab switch). Mirrors NatureScreen's gating
+    // and iOS's `scenePhase == .active` check. start()/stop() are idempotent.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> viewModel.motionManager.start()
+                Lifecycle.Event.ON_PAUSE -> viewModel.motionManager.stop()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.motionManager.stop()
+        }
     }
     val location by viewModel.locationManager.location.collectAsState()
     val closestMountain by viewModel.locationManager.closestMountain.collectAsState()
@@ -127,12 +161,20 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             InfoRow(stringResource(R.string.field_altitude)) {
                 Column(horizontalAlignment = Alignment.End) {
                     MonoText("${String.format(Locale.US, "%.0f", height)} m")
-                    // "calibrating…" hint while QnhRepository hasn't
-                    // fetched a real sea-level pressure for our
-                    // location yet. The altitude shown is still the
-                    // standard-atmosphere fallback, which can be
-                    // off by 100–500 m in real weather, so flag it.
-                    if (!hasAbsoluteFix) {
+                    if (isCalibrated) {
+                        // Manual "I am at X m" pin is active.
+                        Text(
+                            text = stringResource(R.string.field_calibrated),
+                            color = Color(0xFF43A047),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    } else if (!hasAbsoluteFix) {
+                        // "calibrating…" hint while QnhRepository hasn't
+                        // fetched a real sea-level pressure for our
+                        // location yet. The altitude shown is still the
+                        // standard-atmosphere fallback, which can be
+                        // off by 100–500 m in real weather, so flag it.
                         Text(
                             text = stringResource(R.string.field_calibrating),
                             color = Color(0xFFFFC107),
@@ -144,6 +186,20 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             }
             InfoRow(stringResource(R.string.field_percent_everest)) {
                 MonoText("${String.format(Locale.US, "%.4f", everest * 100.0)} %")
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { showCalibrateDialog = true }) {
+                    Text(
+                        stringResource(
+                            if (isCalibrated) R.string.calibrate_recalibrate else R.string.calibrate_action
+                        ),
+                        color = Color.White,
+                        fontSize = 13.sp
+                    )
+                }
             }
         }
 
@@ -285,7 +341,97 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
         Spacer(modifier = Modifier.height(16.dp))
         } // Column
+
+        if (showCalibrateDialog) {
+            CalibrateAltitudeDialog(
+                currentAltitude = height,
+                isCalibrated = isCalibrated,
+                // Back-solving the QNH needs a real station-pressure sample;
+                // before the first reading `pressure` is the 0.0 placeholder
+                // (real samples clamp to ≥30 kPa), which would store a bogus
+                // calibration. Mirrors iOS `Barometer.canCalibrate`.
+                canCalibrate = pressure > 0.0,
+                onCalibrate = { viewModel.calibrateAltitude(it) },
+                onClear = { viewModel.clearAltitudeCalibration() },
+                onDismiss = { showCalibrateDialog = false }
+            )
+        }
     } // Box
+}
+
+/** "I am at X m" dialog: back-solves the QNH from the entered elevation +
+ *  live pressure and pins the altimeter to it. Mirrors iOS
+ *  `CalibrateAltitudeSheet`. */
+@Composable
+private fun CalibrateAltitudeDialog(
+    currentAltitude: Double,
+    isCalibrated: Boolean,
+    canCalibrate: Boolean,
+    onCalibrate: (Double) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var input by remember { mutableStateOf("") }
+    val parsed = input.replace(',', '.').toDoubleOrNull()?.takeIf { it > -500.0 && it < 9000.0 }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.calibrate_title)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.calibrate_message),
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.calibrate_current, currentAltitude.roundToInt()),
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text(stringResource(R.string.calibrate_field_label)) },
+                    singleLine = true,
+                    // Text (not Number): the digits-only keypad has no minus or
+                    // decimal key, which would block below-sea-level elevations
+                    // (Dead Sea −430 m) and fractional markers — the parser
+                    // already validates/normalises. Matches iOS .numbersAndPunctuation.
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                )
+                if (!canCalibrate) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.calibrate_waiting),
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = parsed != null && canCalibrate,
+                onClick = {
+                    parsed?.let(onCalibrate)
+                    onDismiss()
+                }
+            ) { Text(stringResource(R.string.action_save)) }
+        },
+        dismissButton = {
+            Row {
+                if (isCalibrated) {
+                    TextButton(onClick = { onClear(); onDismiss() }) {
+                        Text(stringResource(R.string.calibrate_clear), color = Color(0xFFFF3B30))
+                    }
+                }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+            }
+        }
+    )
 }
 
 @Composable
@@ -372,12 +518,18 @@ private fun SolarInfoCard(location: android.location.Location?) {
     val context = LocalContext.current
     val timeFormat = remember { android.text.format.DateFormat.getTimeFormat(context) }
 
-    // Tick once a second so the countdown stays live.
+    // Tick once a second so the countdown stays live — but only while the
+    // app is foreground-resumed. A bare LaunchedEffect is composition-scoped
+    // and would keep waking the CPU once a second in the background; gating on
+    // RESUMED pauses it there and resumes (re-reading the clock) on return.
+    val lifecycleOwner = LocalLifecycleOwner.current
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(1000)
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                now = System.currentTimeMillis()
+                delay(1000)
+            }
         }
     }
 

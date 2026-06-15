@@ -32,6 +32,7 @@ import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.MountainLoader
 import me.nettrash.geo.util.PeakFinder
+import me.nettrash.geo.util.QnhRepository
 import me.nettrash.geo.util.TripRecordingStore
 import me.nettrash.geo.widget.WidgetUpdater
 import java.util.Date
@@ -44,6 +45,7 @@ class GeoViewModel @Inject constructor(
     val locationManager: LocationManager,
     val motionManager: DeviceMotionManager,
     private val historyRepository: HistoryRepository,
+    private val qnhRepository: QnhRepository,
     private val mountainLoader: MountainLoader,
     private val peakFinder: PeakFinder,
     private val widgetUpdater: WidgetUpdater,
@@ -326,6 +328,27 @@ class GeoViewModel @Inject constructor(
         tripStore.clear()
         _tripStartedAt.value = null
     }
+
+    // ── Manual altitude calibration (M5b) ────────────────────────
+
+    /** Current manual calibration (null = none), for the barometer-card badge. */
+    val altitudeCalibration: StateFlow<QnhRepository.Calibration?> get() = qnhRepository.calibration
+
+    /** Pin the altimeter to [knownAltitudeM] using the live raw pressure. */
+    fun calibrateAltitude(knownAltitudeM: Double) {
+        // Need a real station-pressure sample to back-solve the QNH; the 0.0
+        // placeholder (no reading yet) would store a bogus calibration. The UI
+        // also gates this, but guard the boundary too. Mirrors iOS `canCalibrate`.
+        val livePressureKpa = barometerManager.pressure.value
+        if (livePressureKpa <= 0.0) return
+        qnhRepository.calibrate(knownAltitudeM, livePressureKpa)
+    }
+
+    fun clearAltitudeCalibration() {
+        qnhRepository.clearCalibration()
+    }
+
+    fun isAltitudeCalibrated(nowMs: Long): Boolean = qnhRepository.isCalibrated(nowMs)
 
     fun deleteTrip(trip: Trip) {
         viewModelScope.launch {

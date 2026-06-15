@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import me.nettrash.geo.ar.TerrainElevationService
+import me.nettrash.geo.sensor.Atmosphere
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -74,6 +75,17 @@ class QnhRepository @Inject constructor(
     private val _hasAbsoluteFix = MutableStateFlow(false)
     val hasAbsoluteFix: StateFlow<Boolean> = _hasAbsoluteFix.asStateFlow()
 
+    // ── Manual "I am at X m" calibration (M5b) ───────────────────
+
+    /** A manual calibration: the back-solved sea-level reference (QNH, hPa)
+     *  and the time it was set. Its influence decays to zero over
+     *  [me.nettrash.geo.sensor.Atmosphere.CALIBRATION_DECAY_HOURS]. */
+    data class Calibration(val qnhHpa: Double, val calibratedAtMs: Long)
+
+    private val calStore = me.nettrash.geo.util.AltitudeCalibrationStore(context)
+    private val _calibration = MutableStateFlow<Calibration?>(null)
+    val calibration: StateFlow<Calibration?> = _calibration.asStateFlow()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fetchLock = Mutex()
 
@@ -105,6 +117,12 @@ class QnhRepository @Inject constructor(
     private var lastFetchAtMs: Long = 0L
 
     init {
+        // Restore a persisted manual calibration so an "I am at X m" pin
+        // survives a cold start / offline session.
+        scope.launch {
+            calStore.read()?.let { _calibration.value = Calibration(it.qnhHpa, it.calibratedAtMs) }
+        }
+
         // Seed in-memory state from the last persisted fetch (with a
         // staleness check) so the very first barometer sample after a
         // cold start, and every offline session, can already calibrate.
@@ -140,6 +158,49 @@ class QnhRepository @Inject constructor(
         val persisted = store.read() ?: return null
         val age = System.currentTimeMillis() - persisted.fetchAtMs
         return if (age in 0..staleAfterMs) persisted.qnhHpa else null
+    }
+
+    /** Back-solve the QNH from a known elevation + the live RAW station
+     *  pressure (kPa) and persist it as a manual calibration. */
+    fun calibrate(knownAltitudeM: Double, livePressureKpa: Double) {
+        val qnhHpa = Atmosphere.solveReferencePressure(knownAltitudeM, livePressureKpa) * 10.0
+        val now = System.currentTimeMillis()
+        _calibration.value = Calibration(qnhHpa, now)
+        scope.launch { calStore.write(qnhHpa, now) }
+    }
+
+    fun clearCalibration() {
+        _calibration.value = null
+        scope.launch { calStore.clear() }
+    }
+
+    /** True while a manual calibration is set and not yet fully decayed. */
+    fun isCalibrated(nowMs: Long): Boolean {
+        val cal = _calibration.value ?: return false
+        return Atmosphere.calibrationWeight((nowMs - cal.calibratedAtMs) / 1000.0) > 0.0
+    }
+
+    /** Calibration-aware effective QNH (hPa) for the foreground path: the
+     *  manual QNH decaying toward the network QNH (or standard) over the
+     *  decay window, or the plain network QNH when uncalibrated/expired.
+     *  `null` ⇒ no reference at all (caller uses the lapse fallback). */
+    fun effectiveQnhHpa(nowMs: Long): Double? = blendCalibration(_qnhHpa.value, nowMs)
+
+    /** Suspend variant for the background worker: reads the calibration from
+     *  the store if the in-memory value hasn't seeded yet (fresh process). */
+    suspend fun effectiveQnhHpaNow(nowMs: Long): Double? {
+        if (_calibration.value == null) {
+            calStore.read()?.let { _calibration.value = Calibration(it.qnhHpa, it.calibratedAtMs) }
+        }
+        return blendCalibration(lastKnownQnhHpa(), nowMs)
+    }
+
+    private fun blendCalibration(networkHpa: Double?, nowMs: Long): Double? {
+        val cal = _calibration.value ?: return networkHpa
+        val weight = Atmosphere.calibrationWeight((nowMs - cal.calibratedAtMs) / 1000.0)
+        if (weight <= 0.0) return networkHpa
+        val baseline = networkHpa ?: (Atmosphere.SEA_LEVEL_KPA * 10.0)   // 1013.25 hPa
+        return baseline + (cal.qnhHpa - baseline) * weight
     }
 
     /**

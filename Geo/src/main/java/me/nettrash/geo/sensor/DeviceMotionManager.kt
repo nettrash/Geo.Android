@@ -41,12 +41,22 @@ class DeviceMotionManager @Inject constructor(
 
     private var isStarted = false
 
-    fun start() {
+    /**
+     * Begin delivering heading/pitch/roll.
+     *
+     * [samplingPeriodUs] defaults to [SensorManager.SENSOR_DELAY_UI] (~16 Hz),
+     * which is smooth for the Info-card peak-bearing arrow while keeping the
+     * fused rotation-vector sensor (accelerometer + gyroscope + magnetometer)
+     * far cheaper than the previous `SENSOR_DELAY_GAME` (~50 Hz). The AR Nature
+     * view, which welds labels to the live camera and wants tighter tracking,
+     * opts into the faster rate explicitly.
+     */
+    fun start(samplingPeriodUs: Int = SensorManager.SENSOR_DELAY_UI) {
         if (isStarted) return
         rotationSensor?.let {
             // Track the actual registration result: if it fails, leave
             // isStarted false so a later start() can retry.
-            isStarted = sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            isStarted = sensorManager.registerListener(this, it, samplingPeriodUs)
         }
     }
 
@@ -65,7 +75,10 @@ class DeviceMotionManager @Inject constructor(
             var azimuth = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
             if (azimuth < 0) azimuth += 360f
 
-            _heading.value = azimuth
+            // Publish heading quantised to whole degrees: StateFlow drops
+            // no-op updates, so sub-degree sensor jitter no longer recomposes
+            // the bearing rows every sample. Mirrors iOS `headingFilter = 1°`.
+            _heading.value = (Math.round(azimuth) % 360).toFloat()
             _pitch.value = Math.toDegrees(orientationValues[1].toDouble()).toFloat()
             _roll.value = Math.toDegrees(orientationValues[2].toDouble()).toFloat()
         }

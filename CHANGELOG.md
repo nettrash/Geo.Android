@@ -36,6 +36,14 @@ hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus
   throttle is now atomic; assorted AR/skyline fixes.
 
 ### Added
+- **Known-elevation manual calibration** — pin the altimeter to a trailhead or
+  summit marker ("I am at X m") from the Info barometer card for instant,
+  weather-proof, offline accuracy. Inverts the barometric formula to back-solve the
+  QNH and feeds it into `SensorManager.getAltitude` (persisted in DataStore, so the
+  home-screen widget and the background worker agree with the app). The pin decays
+  over ~6 h toward the live network QNH as weather drifts, so a stale calibration
+  can't silently re-bias the altitude. A green "calibrated" badge shows while it's
+  active. 100 % on-device.
 - **Trip Recorder** — one tap on the Stat tab wraps the always-on sample stream
   into a named outing. Each trip shows total ascent/descent (with sub-3 m noise
   smoothed so the number doesn't inflate), max/min altitude, distance, moving time,

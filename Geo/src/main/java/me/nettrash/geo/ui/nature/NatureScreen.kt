@@ -3,6 +3,7 @@ package me.nettrash.geo.ui.nature
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.SensorManager
 import android.net.Uri
 import android.provider.Settings
 import android.view.ViewGroup
@@ -161,9 +162,19 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     // kicks the terrain skyline calculator off the same tick;
     // SkylineCalculator throttles itself to 500 m of observer
     // movement so the recompute is cheap most of the time.
+    // Motion runs only while the AR session is actually active (foreground +
+    // on-tab + camera/ARCore ready). Keyed on isARActive so it stops the moment
+    // the app is backgrounded (appActive→false), not just on tab-leave —
+    // otherwise the rotation-vector cluster would stay powered in the
+    // background. AR welds labels to the live camera, so opt into the faster
+    // rate for tighter tracking (the Info compass uses the cheaper default).
+    DisposableEffect(isARActive) {
+        if (isARActive) viewModel.motionManager.start(SensorManager.SENSOR_DELAY_GAME)
+        onDispose { viewModel.motionManager.stop() }
+    }
+
     LaunchedEffect(isARActive) {
         if (!isARActive) return@LaunchedEffect
-        viewModel.motionManager.start()
         while (true) {
             viewModel.searchForPeaks()
             viewModel.loadARHistoryPoints()
@@ -245,7 +256,7 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
     DisposableEffect(Unit) {
         onDispose {
-            viewModel.motionManager.stop()
+            // motionManager is stopped by the isARActive DisposableEffect above.
             controller.markUntracked()
             // Stop any in-flight skyline computation so Open-Elevation
             // batches don't keep running after the AR view tears down.
