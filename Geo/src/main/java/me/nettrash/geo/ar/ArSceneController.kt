@@ -8,6 +8,8 @@ import com.google.ar.core.TrackingState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Per-frame AR camera state, mirroring iOS `Nature/ARSessionManager`.
@@ -38,6 +40,33 @@ class ArSceneController {
     /** Current viewport (px). */
     private val _viewportSize = MutableStateFlow<IntSize?>(null)
     val viewportSize: StateFlow<IntSize?> = _viewportSize.asStateFlow()
+
+    // ---- True-north correction ---------------------------------------------
+    // ARCore (no Geospatial) aligns its world frame to GRAVITY only — its yaw is
+    // wherever the device faced at session start, NOT true north. iOS gets true
+    // north for free from ARKit `gravityAndHeading`. So we measure the offset
+    // between the device's true compass heading and the heading implied by the
+    // ARCore pose, and rotate every projected point by it in [projectToScreen].
+    // Sign convention: frameYawOffsetDeg = trueCompassHeading − arcorePoseHeading
+    // (both 0=N, clockwise). If the overlay ends up rotated the WRONG way on a
+    // device, negate this one value (and the rotation in projectToScreen).
+
+    /** Smoothed true-north yaw correction (deg). Read by the overlay/hit-test to
+     *  shift their bearing windows to true north; applied to every point in
+     *  [projectToScreen]. */
+    @Volatile
+    var frameYawOffsetDeg: Float = 0f
+        private set
+
+    /** Latest device TRUE compass heading (deg, 0=N), pushed from the UI. NaN
+     *  until the first reading — until then no correction is applied. */
+    @Volatile
+    private var compassTrueHeadingDeg: Float = Float.NaN
+    private var yawOffsetInitialized = false
+
+    /** Push the device's true (declination-corrected) compass heading so the
+     *  per-frame [update] can derive the ARCore-frame → true-north offset. */
+    fun setCompassTrueHeading(deg: Float) { compassTrueHeadingDeg = deg }
 
     /** True when ARCore reports `TrackingState.TRACKING`. */
     private val _isTracking = MutableStateFlow(false)
@@ -171,6 +200,22 @@ class ArSceneController {
         val pos = FloatArray(3)
         cam.pose.getTranslation(pos, 0)
         _cameraPosition.value = pos
+
+        // Derive the true-north yaw correction from the device compass vs the
+        // ARCore pose heading. The two track the same physical rotation, so their
+        // difference is ~constant for the session; smooth it to reject magnetic
+        // jitter without lagging real drift.
+        val compass = compassTrueHeadingDeg
+        if (!compass.isNaN()) {
+            val arcoreHeading = cameraHeadingDeg(view).toFloat()
+            val target = normalizeDeg(compass - arcoreHeading)
+            frameYawOffsetDeg = if (!yawOffsetInitialized) {
+                yawOffsetInitialized = true
+                target
+            } else {
+                normalizeDeg(frameYawOffsetDeg + shortestDeg(target - frameYawOffsetDeg) * 0.1f)
+            }
+        }
 
         // Best-effort centre-of-viewport hit-test. ARCore picks the
         // closest qualifying anchor along the screen-centre ray.
@@ -312,8 +357,28 @@ class ArSceneController {
         if (vp.width <= 0 || vp.height <= 0) return null
         if (world.size < 3) return null
 
+        // Correct ARCore's non-north-aligned world frame: rotate the point about
+        // the up (+Y) axis, around the CAMERA position, by the measured offset, so
+        // a point built at its TRUE bearing lands at the true real-world direction.
+        var wx = world[0]
+        val wy = world[1]
+        var wz = world[2]
+        val yaw = frameYawOffsetDeg
+        val camPos = _cameraPosition.value
+        if (yaw != 0f && camPos != null) {
+            val ox = wx - camPos[0]
+            val oz = wz - camPos[2]
+            val a = Math.toRadians(yaw.toDouble())
+            val ca = cos(a)
+            val sa = sin(a)
+            // Rotation about +Y for an (X=east, Z=−north) frame:
+            //   x' = x·cosδ + z·sinδ ;  z' = −x·sinδ + z·cosδ
+            wx = camPos[0] + (ox * ca + oz * sa).toFloat()
+            wz = camPos[2] + (-ox * sa + oz * ca).toFloat()
+        }
+
         // world (x, y, z, 1) → view space (column-major multiply).
-        val viewSpace = multiplyMatVec4(view, world[0], world[1], world[2], 1f)
+        val viewSpace = multiplyMatVec4(view, wx, wy, wz, 1f)
         val clip = multiplyMatVec4(proj, viewSpace[0], viewSpace[1], viewSpace[2], viewSpace[3])
         val w = clip[3]
         if (w <= 0f) return null  // behind camera
@@ -346,6 +411,17 @@ class ArSceneController {
                 m[3 * 4 + row] * w
         }
         return out
+    }
+
+    /** Wrap an angle to [0, 360). */
+    private fun normalizeDeg(deg: Float): Float = ((deg % 360f) + 360f) % 360f
+
+    /** Shortest signed difference between two angles, in (−180, 180]. */
+    private fun shortestDeg(deg: Float): Float {
+        var d = deg % 360f
+        if (d > 180f) d -= 360f
+        if (d <= -180f) d += 360f
+        return d
     }
 
     /** Tiny viewport size struct so we don't drag in `androidx.compose.ui.unit.IntSize`'s
