@@ -9,6 +9,13 @@ one recorded here.
 ## [Unreleased]
 
 ### Added
+- **Peak labels welded to the terrain skyline** — in the Nature (AR) view, named
+  peaks that form the horizon silhouette now float their name + elevation ("Mont
+  Blanc 4808 m") right on the green ridge line, turning the abstract skyline into
+  an **identified panorama**. Each peak is matched to the silhouette by apparent
+  elevation angle — so peaks hidden behind nearer, higher terrain are skipped —
+  and its label is welded to the ridge; nearer peaks win when labels would
+  overlap. Reuses the skyline + peak data already computed — no new network.
 - **Summit log — auto-detect arrival at a known peak** — walk within ~500 m of a
   Seven Summit / Snow Leopard / other known peak and Geo offers to log the ascent
   (date, the peak's elevation, your measured barometric altitude, an optional note)

@@ -88,6 +88,7 @@ import me.nettrash.geo.ar.ArProjection
 import me.nettrash.geo.ar.ArSceneController
 import me.nettrash.geo.ar.HorizonOverlay
 import me.nettrash.geo.ar.PanoramaCapture
+import me.nettrash.geo.ar.peakOnSilhouette
 import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.GeoCalculations
@@ -332,6 +333,18 @@ private fun ArScene(
     val isSceneReady by viewModel.occlusionManager.isSceneReady.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
 
+    // Peaks welded to the skyline ridge — their AR markers are suppressed so a
+    // peak shows EITHER a ridge label OR a marker (matches the horizon overlay).
+    val weldedPeakIds = remember(peaks, skyline, location, barometerHeight) {
+        val loc = location
+        if (loc == null || skyline.isEmpty()) {
+            emptySet()
+        } else {
+            val obsAlt = if (barometerHeight > 0) barometerHeight else loc.altitude
+            peaks.filter { peakOnSilhouette(it, skyline, obsAlt) }.map { it.id }.toSet()
+        }
+    }
+
     // Tap-to-identify + freeze-frame share.
     var selectedMarker by remember { mutableStateOf<ArMarkerSelection?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
@@ -423,7 +436,8 @@ private fun ArScene(
                     controller = controller,
                     userLocation = location,
                     barometerAltitude = barometerHeight.takeIf { it > 0 },
-                    skyline = skyline
+                    skyline = skyline,
+                    peaks = peaks
                 )
             }
 
@@ -442,6 +456,7 @@ private fun ArScene(
                     userLocation = location,
                     peaks = peaks.filterNot {
                         it.id in occludedIds ||
+                            it.id in weldedPeakIds ||   // labelled on the ridge instead
                             (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
                     },
                     historyPoints = historyPoints.filterNot {

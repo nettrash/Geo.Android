@@ -2,15 +2,24 @@ package me.nettrash.geo.ar
 
 import android.location.Location
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -19,12 +28,16 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.GeoCalculations
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 
@@ -49,6 +62,7 @@ fun HorizonOverlay(
     userLocation: Location?,
     barometerAltitude: Double?,
     skyline: List<SkylineSample>,
+    peaks: List<NearbyPeak>,
     modifier: Modifier = Modifier
 ) {
     val viewportState by controller.viewportSize.collectAsState()
@@ -80,7 +94,11 @@ fun HorizonOverlay(
     var headingDeg = Math.toDegrees(kotlin.math.atan2(fwdX.toDouble(), (-fwdZ).toDouble()))
     if (headingDeg < 0) headingDeg += 360.0
 
-    val observerAlt = max(barometerAltitude ?: userLocation.altitude, 0.0)
+    // No clamp to >= 0: a below-sea-level observer (Dead Sea, Death Valley) has a
+    // real negative eye height, and the silhouette/labels must use it (matches
+    // iOS, and the SkylineCalculator that picked the silhouette). The barometer
+    // is already pre-filtered to > 0 at the call site.
+    val observerAlt = barometerAltitude ?: userLocation.altitude
     val h = max(observerAlt, 1.5) // floor so very-low altitudes still draw something
     val geometricHorizon = GeoCalculations.horizonDistance(h)
 
@@ -164,6 +182,52 @@ fun HorizonOverlay(
         }
     }
 
+    // Peak labels welded to the silhouette — only when a real skyline exists.
+    val peakLabels = remember(skyline, view, cam, viewport, observerAlt, headingDeg, peaks) {
+        if (skyline.isEmpty()) {
+            emptyList()
+        } else {
+            val minSpacing = 104f   // wide enough that adjacent long-name pills don't overlap
+            val maxLabels = 10
+
+            data class Cand(val name: String, val altitude: Double, val pos: Offset, val distance: Double)
+            val cands = ArrayList<Cand>()
+            for (peak in peaks) {
+                // `peakOnSilhouette` (camera-independent) decides which peaks are
+                // on the ridge; the same predicate suppresses their duplicate AR
+                // markers in NatureScreen.
+                if (!peakOnSilhouette(peak, skyline, observerAlt)) continue
+                if (abs(angleDelta(peak.bearing, headingDeg)) > headingHalfWindowDeg) continue
+
+                val (skyDist, skyAlt) = interpolateSkyline(((peak.bearing % 360) + 360) % 360, skyline)
+                val theta = Math.toRadians(peak.bearing)
+                val east = skyDist * kotlin.math.sin(theta)
+                val north = skyDist * kotlin.math.cos(theta)
+                val up = (skyAlt - observerAlt) - (skyDist * skyDist) / (2.0 * GeoCalculations.EARTH_RADIUS)
+                val world = floatArrayOf(
+                    east.toFloat() + cam[0], up.toFloat() + cam[1], (-north).toFloat() + cam[2]
+                )
+                val screen = controller.projectToScreen(world) ?: continue
+                if (!screen.x.isFinite() || !screen.y.isFinite()) continue
+                if (screen.x < -200 || screen.x > viewport.width + 200 ||
+                    screen.y < -200 || screen.y > viewport.height + 200
+                ) continue
+                cands.add(Cand(peak.name, peak.altitude, screen, peak.distance))
+            }
+            // Nearer (more prominent) peaks first; keep those at least
+            // `minSpacing` apart horizontally, up to `maxLabels`.
+            cands.sortBy { it.distance }
+            val kept = ArrayList<Cand>()
+            for (c in cands) {
+                if (kept.all { abs(it.pos.x - c.pos.x) >= minSpacing }) {
+                    kept.add(c)
+                    if (kept.size >= maxLabels) break
+                }
+            }
+            kept
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             for (segment in segments) {
@@ -194,6 +258,46 @@ fun HorizonOverlay(
         for ((label, pos) in labels) {
             CardinalLabel(label, pos)
         }
+        for (label in peakLabels) {
+            PeakLabel(label.name, label.altitude, label.pos)
+        }
+    }
+}
+
+/** A named peak floated just above its ridge silhouette position. */
+@Composable
+private fun PeakLabel(name: String, altitude: Double, position: Offset) {
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    Box(
+        modifier = Modifier
+            .offset {
+                // Centre horizontally on the ridge point and float just above it.
+                // Until measured (size 0) park it off-screen so it doesn't flash
+                // top-left for one frame.
+                if (size == IntSize.Zero) {
+                    IntOffset(-10_000, -10_000)
+                } else {
+                    IntOffset(
+                        (position.x - size.width / 2f).toInt(),
+                        (position.y - size.height - 8).toInt()
+                    )
+                }
+            }
+            .onSizeChanged { size = it }
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.6f))
+            .border(0.75.dp, Color(0xFFFF9800).copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 6.dp, vertical = 3.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("▲", color = Color(0xFFFF9800), fontSize = 8.sp)
+            Spacer(Modifier.width(3.dp))
+            Text(name, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            if (altitude > 0) {
+                Spacer(Modifier.width(3.dp))
+                Text("${altitude.toInt()} m", color = Color.White.copy(alpha = 0.75f), fontSize = 10.sp)
+            }
+        }
     }
 }
 
@@ -215,6 +319,22 @@ private fun CardinalLabel(text: String, position: Offset) {
     }
 }
 
+/**
+ * Camera-INDEPENDENT test: does this named peak form the visible skyline
+ * silhouette (tip on/above the ridge, not occluded behind nearer, higher
+ * terrain)? Drives both the welded ridge label and the suppression of the
+ * peak's duplicate AR marker, so a peak shows EITHER a ridge label OR a marker.
+ * Mirrors iOS `peakOnSilhouette`.
+ */
+fun peakOnSilhouette(peak: NearbyPeak, skyline: List<SkylineSample>, observerAlt: Double): Boolean {
+    if (peak.name.isEmpty() || peak.distance < 1_000.0 || skyline.isEmpty()) return false
+    fun angle(d: Double, alt: Double): Double =
+        atan2((alt - observerAlt) - (d * d) / (2.0 * GeoCalculations.EARTH_RADIUS), max(d, 1.0))
+    val (skyDist, skyAlt) = interpolateSkyline(((peak.bearing % 360) + 360) % 360, skyline)
+    val tol = Math.toRadians(1.5)
+    return angle(peak.distance, peak.altitude) >= angle(skyDist, skyAlt) - tol
+}
+
 private fun resolveBearing(
     bearing: Double,
     samples: List<SkylineSample>,
@@ -229,6 +349,7 @@ private fun interpolateSkyline(
     bearing: Double,
     samples: List<SkylineSample>
 ): Pair<Double, Double> {
+    if (samples.isEmpty()) return 0.0 to 0.0
     if (samples.size == 1) return samples[0].distance to samples[0].altitude
     var hiIdx = samples.indexOfFirst { it.bearing > bearing }
     val loIdx: Int
