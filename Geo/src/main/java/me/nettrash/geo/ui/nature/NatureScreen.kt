@@ -13,7 +13,10 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateIntOffsetAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +37,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,20 +46,30 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -67,16 +81,20 @@ import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import io.github.sceneview.ar.ARSceneView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import me.nettrash.geo.R
 import me.nettrash.geo.ar.ArOcclusionManager
 import me.nettrash.geo.ar.ArProjection
 import me.nettrash.geo.ar.ArSceneController
 import me.nettrash.geo.ar.HorizonOverlay
+import me.nettrash.geo.ar.PanoramaCapture
 import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.ui.GeoViewModel
 import java.util.Locale
+import java.util.UUID
+import kotlin.math.hypot
 
 @Composable
 fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
@@ -314,6 +332,22 @@ private fun ArScene(
     val isSceneReady by viewModel.occlusionManager.isSceneReady.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
 
+    // Tap-to-identify + freeze-frame share.
+    var selectedMarker by remember { mutableStateOf<ArMarkerSelection?>(null) }
+    var isCapturing by remember { mutableStateOf(false) }
+    var arView by remember { mutableStateOf<ARSceneView?>(null) }
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val captureScope = rememberCoroutineScope()
+    // Records the skyline+marker overlay so the shutter can read it back; the
+    // Filament camera surface is captured separately via PixelCopy.
+    val overlayLayer = rememberGraphicsLayer()
+    val hitRadiusPx = with(density) { 56.dp.toPx() }
+    // Measured marker sizes (id → px). Markers are TOP-LEFT-anchored on their
+    // projected point, so the hit-test offsets by half the measured size to
+    // compare against the visual CENTRE (matching iOS's center anchor).
+    val markerSizes = remember { mutableStateMapOf<UUID, IntSize>() }
+
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { /* viewport handled via AndroidView */ }) {
         AndroidView(
             factory = { ctx ->
@@ -364,50 +398,85 @@ private fun ArScene(
                     onSessionUpdated = { session, frame ->
                         controller.update(session, frame, width, height)
                     }
-                }
+                }.also { arView = it }
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Terrain-aware skyline (or geometric fallback) rendered
-        // first so peak markers sit on top of the line.
-        if (location != null && isTracking) {
-            HorizonOverlay(
-                controller = controller,
-                userLocation = location,
-                barometerAltitude = barometerHeight.takeIf { it > 0 },
-                skyline = skyline
-            )
+        // Captured overlay: skyline + markers recorded into a GraphicsLayer so
+        // the shutter can read back exactly what's drawn here (the Filament
+        // camera surface is captured separately via PixelCopy). The crosshair,
+        // top bar and shutter live OUTSIDE this layer so they don't end up in
+        // the shared image.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    overlayLayer.record { this@drawWithContent.drawContent() }
+                    drawLayer(overlayLayer)
+                }
+        ) {
+            // Terrain-aware skyline (or geometric fallback) rendered
+            // first so peak markers sit on top of the line.
+            if (location != null && isTracking) {
+                HorizonOverlay(
+                    controller = controller,
+                    userLocation = location,
+                    barometerAltitude = barometerHeight.takeIf { it > 0 },
+                    skyline = skyline
+                )
+            }
+
+            // Peak / history markers — only render when matrices are
+            // available AND the user has a location, otherwise fall back
+            // to the simpler bearing-window overlay used previously so
+            // we still show *something* before the AR session warms up.
+            if (location != null && isTracking && viewportSize != null) {
+                // Suppress near markers (< NEARBY_THRESHOLD_M) until the
+                // scene is ready, so they don't flash in before they can
+                // be occluded by detected geometry. Far markers always
+                // show. Mirrors iOS `PeakOverlayView` gating on
+                // `distance >= nearbyThreshold || isSceneReady`.
+                ProjectedOverlay(
+                    controller = controller,
+                    userLocation = location,
+                    peaks = peaks.filterNot {
+                        it.id in occludedIds ||
+                            (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
+                    },
+                    historyPoints = historyPoints.filterNot {
+                        it.id in occludedIds ||
+                            (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
+                    },
+                    onMarkerSized = { id, size -> markerSizes[id] = size }
+                )
+            } else {
+                BearingWindowOverlay(
+                    peaks = peaks,
+                    historyPoints = historyPoints,
+                    heading = heading,
+                    userAltitude = location?.altitude ?: 0.0
+                )
+            }
         }
 
-        // Peak / history markers — only render when matrices are
-        // available AND the user has a location, otherwise fall back
-        // to the simpler bearing-window overlay used previously so
-        // we still show *something* before the AR session warms up.
-        if (location != null && isTracking && viewportSize != null) {
-            // Suppress near markers (< NEARBY_THRESHOLD_M) until the
-            // scene is ready, so they don't flash in before they can
-            // be occluded by detected geometry. Far markers always
-            // show. Mirrors iOS `PeakOverlayView` gating on
-            // `distance >= nearbyThreshold || isSceneReady`.
-            ProjectedOverlay(
-                controller = controller,
-                userLocation = location,
-                peaks = peaks.filterNot {
-                    it.id in occludedIds ||
-                        (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
-                },
-                historyPoints = historyPoints.filterNot {
-                    it.id in occludedIds ||
-                        (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
-                }
-            )
-        } else {
-            BearingWindowOverlay(
-                peaks = peaks,
-                historyPoints = historyPoints,
-                heading = heading,
-                userAltitude = location?.altitude ?: 0.0
+        // Tap-to-identify: a tap runs a screen-space nearest-marker hit-test
+        // (same projection + occlusion/near filters as ProjectedOverlay) and
+        // opens the detail sheet. Only active once tracking — never over the
+        // pre-tracking BearingWindow fallback. Below the top bar so its
+        // long-press-for-diagnostics keeps working.
+        if (location != null && isTracking) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(peaks, historyPoints, occludedIds, isSceneReady, viewportSize) {
+                        detectTapGestures { tap ->
+                            nearestMarker(
+                                tap, controller, location, peaks, historyPoints,
+                                occludedIds, isSceneReady, hitRadiusPx, markerSizes
+                            )?.let { selectedMarker = it }
+                        }
+                    }
             )
         }
 
@@ -557,7 +626,114 @@ private fun ArScene(
                 onDismiss = { showDiagnostics = false }
             )
         }
+
+        // Shutter — capture a frozen, annotated panorama to share. Outside the
+        // recorded overlay layer so the button isn't baked into the image.
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            Box(
+                modifier = Modifier
+                    .padding(bottom = 28.dp)
+                    .size(68.dp)
+                    .clip(CircleShape)
+                    .clickable(enabled = isTracking && !isCapturing) {
+                        val view = arView ?: return@clickable
+                        isCapturing = true
+                        captureScope.launch {
+                            try {
+                                // GraphicsLayer readback must happen on the main thread.
+                                val overlay = overlayLayer.toImageBitmap().asAndroidBitmap()
+                                val markers = peaks.count {
+                                    it.id !in occludedIds && (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
+                                } + historyPoints.count {
+                                    it.id !in occludedIds && (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
+                                }
+                                PanoramaCapture.captureAndShare(context, view, overlay, markers)
+                            } finally {
+                                isCapturing = false
+                            }
+                        }
+                    }
+                    .border(4.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                    .padding(7.dp)
+                    .clip(CircleShape)
+                    .background(if (isTracking) Color.White else Color.White.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isCapturing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = Color.Black,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.CameraAlt,
+                        contentDescription = stringResource(R.string.ar_capture),
+                        tint = Color.Black,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+        }
+
+        // Tap-to-identify detail sheet.
+        selectedMarker?.let { sel ->
+            MarkerDetailSheet(selection = sel, onDismiss = { selectedMarker = null })
+        }
     }
+}
+
+/**
+ * Screen-space nearest-marker hit-test for tap-to-identify. Recomputes each
+ * visible marker's projected position via [ArProjection] (the same source the
+ * overlay uses) and returns the closest within [hitRadiusPx]. Peaks (drawn on
+ * top) win near-ties — a history point must be strictly closer to be chosen.
+ * Applies the SAME occluded / near-warm-up filter as [ProjectedOverlay] so an
+ * off-screen or hidden marker can never be selected.
+ */
+private fun nearestMarker(
+    tap: Offset,
+    controller: ArSceneController,
+    userLocation: android.location.Location,
+    peaks: List<NearbyPeak>,
+    historyPoints: List<ARHistoryPoint>,
+    occludedIds: Set<UUID>,
+    isSceneReady: Boolean,
+    hitRadiusPx: Float,
+    markerSizes: Map<UUID, IntSize>
+): ArMarkerSelection? {
+    var best: ArMarkerSelection? = null
+    var bestDist = hitRadiusPx
+
+    fun visible(id: UUID, distance: Double): Boolean =
+        id !in occludedIds && (distance >= NEARBY_THRESHOLD_M || isSceneReady)
+
+    // Markers are TOP-LEFT-anchored on the projected point, so compare the tap
+    // against the marker's visual CENTRE (offset by half its measured size).
+    fun centerDist(id: UUID, off: Offset): Float {
+        val size = markerSizes[id]
+        val cx = if (size != null) off.x + size.width / 2f else off.x
+        val cy = if (size != null) off.y + size.height / 2f else off.y
+        return hypot((cx - tap.x).toDouble(), (cy - tap.y).toDouble()).toFloat()
+    }
+
+    for (peak in peaks) {
+        if (!visible(peak.id, peak.distance)) continue
+        val off = ArProjection.projectGps(
+            controller, userLocation, peak.latitude, peak.longitude, peak.altitude
+        ) ?: continue
+        val d = centerDist(peak.id, off)
+        if (d <= bestDist) { bestDist = d; best = ArMarkerSelection.Peak(peak) }
+    }
+    for (point in historyPoints) {
+        if (!visible(point.id, point.distance)) continue
+        val off = ArProjection.projectGps(
+            controller, userLocation, point.latitude, point.longitude, point.gpsAltitude
+        ) ?: continue
+        val d = centerDist(point.id, off)
+        if (d < bestDist) { bestDist = d; best = ArMarkerSelection.History(point) }
+    }
+    return best
 }
 
 /**
@@ -569,7 +745,8 @@ private fun ProjectedOverlay(
     controller: ArSceneController,
     userLocation: android.location.Location,
     peaks: List<NearbyPeak>,
-    historyPoints: List<ARHistoryPoint>
+    historyPoints: List<ARHistoryPoint>,
+    onMarkerSized: (UUID, IntSize) -> Unit = { _, _ -> }
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         // History points first so peaks render on top. `key(id)`
@@ -595,7 +772,7 @@ private fun ProjectedOverlay(
                 if (off != null) {
                     val opacity = (1.0 - (point.distance / 50_000.0) * 0.5)
                         .coerceIn(0.5, 1.0).toFloat() * 0.85f
-                    AnimatedMarker(target = off) {
+                    AnimatedMarker(target = off, onMeasured = { onMarkerSized(point.id, it) }) {
                         HistoryMarker(point = point, opacity = opacity)
                     }
                 }
@@ -614,7 +791,7 @@ private fun ProjectedOverlay(
                 if (off != null) {
                     val opacity = (1.0 - (peak.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
                     val scale = (1.0 - (peak.distance / 50_000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
-                    AnimatedMarker(target = off) {
+                    AnimatedMarker(target = off, onMeasured = { onMarkerSized(peak.id, it) }) {
                         PeakMarker(peak = peak, opacity = opacity, scale = scale)
                     }
                 }
@@ -638,6 +815,7 @@ private fun ProjectedOverlay(
 @Composable
 private fun AnimatedMarker(
     target: androidx.compose.ui.geometry.Offset,
+    onMeasured: (IntSize) -> Unit = {},
     content: @Composable () -> Unit
 ) {
     val animated by animateIntOffsetAsState(
@@ -645,7 +823,11 @@ private fun AnimatedMarker(
         animationSpec = tween(durationMillis = 33, easing = LinearEasing),
         label = "marker_offset"
     )
-    Box(modifier = Modifier.absoluteOffset { animated }) {
+    Box(
+        modifier = Modifier
+            .absoluteOffset { animated }
+            .onSizeChanged(onMeasured)
+    ) {
         content()
     }
 }
