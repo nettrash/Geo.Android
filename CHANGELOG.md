@@ -6,6 +6,18 @@ Play `versionCode`; note that `versionCode` auto-increments on every
 assemble/bundle, so the value actually uploaded to Play may be higher than the
 one recorded here.
 
+## [Unreleased]
+
+### Added
+- **Tap-to-identify AR markers + freeze-frame share** — the Nature (AR) view is now
+  explorable: tap any peak or history marker to open a detail sheet (name, altitude,
+  distance, bearing, coordinates, plus a Directions button), via a screen-space
+  nearest-marker hit-test against the same live projection that places the markers
+  (offset to the marker's measured centre). A shutter button captures a **frozen,
+  annotated panorama** — the live ARCore camera frame (`PixelCopy`) with the marker +
+  skyline Compose overlay (`GraphicsLayer`) composited on top and a small "Geo"
+  footer — and shares it via a new `FileProvider`. 100 % on-device; nothing is uploaded.
+
 ## [1.1] — 2026-06-14
 
 A correctness, accuracy and reliability release: a critical first-run fix, a

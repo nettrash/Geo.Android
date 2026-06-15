@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider paths for sharing the freeze-frame AR panorama. Only the
+    private cache subdirectory `shared/` is exposed, so nothing else in the
+    app's storage is reachable through the provider. On-device only — the
+    image is handed to the system share sheet, never uploaded by the app.
+-->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>

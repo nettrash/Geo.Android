@@ -144,6 +144,18 @@
     <string name="ar_distance_source_raycast">Raycast</string>
     <string name="ar_distance_unknown">--</string>
 
+    <!-- Tap-to-identify markers + freeze-frame share -->
+    <string name="ar_capture">Capture panorama</string>
+    <string name="ar_history_point">History point</string>
+    <string name="ar_recorded">Recorded</string>
+    <string name="ar_gps_altitude">GPS altitude</string>
+    <string name="ar_bar_altitude">Barometric altitude</string>
+    <string name="ar_share_title">Share panorama</string>
+    <plurals name="ar_share_markers">
+        <item quantity="one">%1$d marker</item>
+        <item quantity="other">%1$d markers</item>
+    </plurals>
+
     <!-- Permission banner (location / motion) -->
     <string name="permissions_banner_headline_both">Location &amp; motion access required</string>
     <string name="permissions_banner_headline_location">Location access required</string>
