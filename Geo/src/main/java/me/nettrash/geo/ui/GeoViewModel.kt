@@ -10,14 +10,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import me.nettrash.geo.data.db.HistoryItem
+import me.nettrash.geo.data.db.SummitLog
 import me.nettrash.geo.data.db.Trip
 import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.DataItem
 import me.nettrash.geo.data.model.DataPoint
 import me.nettrash.geo.data.model.MountainData
+import me.nettrash.geo.data.model.MountainInfo
+import me.nettrash.geo.data.model.MountainList
 import me.nettrash.geo.data.model.NearbyPeak
+import java.util.Locale
 import me.nettrash.geo.data.repository.HistoryRepository
 import me.nettrash.geo.data.snapshot.SharedSnapshotStore
 import me.nettrash.geo.ar.ArOcclusionManager
@@ -110,6 +118,29 @@ class GeoViewModel @Inject constructor(
     private val _trips = MutableStateFlow<List<Trip>>(emptyList())
     val trips: StateFlow<List<Trip>> = _trips.asStateFlow()
 
+    // ── Summit log (auto-detect arrival at a known peak) ─────────
+    private val _summitLogs = MutableStateFlow<List<SummitLog>>(emptyList())
+    val summitLogs: StateFlow<List<SummitLog>> = _summitLogs.asStateFlow()
+
+    /** The nearby known peak currently offered for logging (within range, not
+     *  dismissed, not already logged recently). Drives the proximity prompt. */
+    private val _nearbyUnloggedPeak = MutableStateFlow<SummitCandidate?>(null)
+    val nearbyUnloggedPeak: StateFlow<SummitCandidate?> = _nearbyUnloggedPeak.asStateFlow()
+
+    /** Peak keys the user dismissed/logged this approach; cleared when they
+     *  leave all peaks' range so a fresh re-approach can prompt again. */
+    private val dismissedSummitKeys = mutableSetOf<String>()
+
+    /** Horizontal radius (m) within which we offer to log a summit. Manual
+     *  confirm only — barometric altitude bias means we never auto-log. */
+    private val summitProximityRadiusM = 500.0
+
+    data class SummitCandidate(
+        val peak: MountainInfo,
+        val peakSet: String,
+        val peakIdentifier: String
+    )
+
     // Peaks for AR
     private val _peaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
     val peaks: StateFlow<List<NearbyPeak>> = _peaks.asStateFlow()
@@ -165,8 +196,59 @@ class GeoViewModel @Inject constructor(
         }
         locationManager.startLocationUpdates()
 
+        // Summit-log proximity detection: offer to log when the user is within
+        // `summitProximityRadiusM` of a known peak. Re-evaluated only when the
+        // nearest in-range peak actually changes (distinctUntilChanged), so the
+        // de-dup DB check runs rarely, not on every GPS fix.
+        combine(
+            locationManager.closestMountain,
+            locationManager.closestMountainDistance
+        ) { peak, dist ->
+            if (peak != null && dist != null && dist < summitProximityRadiusM &&
+                peak.coordinates?.latitude != null && peak.coordinates?.longitude != null
+            ) peak else null
+        }
+            .distinctUntilChanged { a, b -> summitKey(a) == summitKey(b) }
+            .onEach { peak -> evaluateSummitCandidate(peak) }
+            .launchIn(viewModelScope)
+
         // Load initial history
         refreshHistory()
+    }
+
+    private suspend fun evaluateSummitCandidate(peak: MountainInfo?) {
+        if (peak == null) {
+            _nearbyUnloggedPeak.value = null
+            dismissedSummitKeys.clear()   // out of range → re-approach may prompt
+            return
+        }
+        val key = summitKey(peak) ?: return
+        if (key in dismissedSummitKeys || historyRepository.summitLoggedRecently(key, 18)) {
+            _nearbyUnloggedPeak.value = null
+        } else {
+            _nearbyUnloggedPeak.value = SummitCandidate(peak, deriveSummitSet(peak), key)
+        }
+    }
+
+    /** Stable de-dup key for a peak, from its name + rounded coordinates. */
+    private fun summitKey(peak: MountainInfo?): String? {
+        val c = peak?.coordinates ?: return null
+        val lat = c.latitude ?: return null
+        val lon = c.longitude ?: return null
+        return "${peak.name ?: ""}@${String.format(Locale.US, "%.4f", lat)},${String.format(Locale.US, "%.4f", lon)}"
+    }
+
+    /** Which curated set the peak belongs to (Seven Summits / Snow Leopard take
+     *  precedence over "highest"). */
+    private fun deriveSummitSet(peak: MountainInfo): String {
+        val data = _mountainsData.value ?: return "highest"
+        fun has(list: MountainList?) =
+            list?.mountains?.any { it.name == peak.name && it.coordinates == peak.coordinates } == true
+        return when {
+            has(data.sevenPeaks) -> "sevenPeaks"
+            has(data.snowLeopardOfRussia) -> "snowLeopardOfRussia"
+            else -> "highest"
+        }
     }
 
     /**
@@ -354,6 +436,57 @@ class GeoViewModel @Inject constructor(
         viewModelScope.launch {
             historyRepository.deleteTrip(trip)
             _trips.value = historyRepository.getTrips()
+        }
+    }
+
+    // ── Summit log actions ───────────────────────────────────────
+
+    fun loadSummitLogs() {
+        viewModelScope.launch { _summitLogs.value = historyRepository.getSummitLogs() }
+    }
+
+    /** Log the current nearby peak with an optional [note], using the live
+     *  barometric altitude as the measured value. No-op if nothing is in range. */
+    fun logSummit(note: String) {
+        val candidate = _nearbyUnloggedPeak.value ?: return
+        val peak = candidate.peak
+        val log = SummitLog(
+            peakName = peak.name ?: "",
+            peakIdentifier = candidate.peakIdentifier,
+            peakSet = candidate.peakSet,
+            peakAltitude = peak.height ?: 0,
+            latitude = peak.coordinates?.latitude ?: 0.0,
+            longitude = peak.coordinates?.longitude ?: 0.0,
+            loggedDate = System.currentTimeMillis(),
+            measuredAltitude = barometerManager.height.value,
+            note = note.trim().ifEmpty { null }
+        )
+        dismissedSummitKeys.add(candidate.peakIdentifier)
+        _nearbyUnloggedPeak.value = null
+        viewModelScope.launch {
+            historyRepository.saveSummitLog(log)
+            _summitLogs.value = historyRepository.getSummitLogs()
+        }
+    }
+
+    /** Dismiss the proximity prompt without logging (suppressed until the user
+     *  walks out of range and re-approaches). */
+    fun dismissNearbySummit() {
+        _nearbyUnloggedPeak.value?.let { dismissedSummitKeys.add(it.peakIdentifier) }
+        _nearbyUnloggedPeak.value = null
+    }
+
+    fun deleteSummitLog(log: SummitLog) {
+        viewModelScope.launch {
+            historyRepository.deleteSummitLog(log)
+            _summitLogs.value = historyRepository.getSummitLogs()
+        }
+    }
+
+    fun updateSummitNote(log: SummitLog, note: String) {
+        viewModelScope.launch {
+            historyRepository.updateSummitLog(log.copy(note = note.trim().ifEmpty { null }))
+            _summitLogs.value = historyRepository.getSummitLogs()
         }
     }
 

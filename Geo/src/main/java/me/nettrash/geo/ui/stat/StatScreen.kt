@@ -177,6 +177,8 @@ fun StatScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
         TripsSection(viewModel)
 
+        SummitLogSection(viewModel)
+
         Spacer(modifier = Modifier.height(16.dp))
 
         Button(

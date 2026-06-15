@@ -71,6 +71,24 @@ object PanoramaCapture {
         false
     }
 
+    /**
+     * Write an already-rendered [bitmap] to cacheDir/shared and hand it to the
+     * system share sheet. Shared entry point for non-AR cards (e.g. the summit
+     * card) that don't need the PixelCopy camera capture.
+     */
+    suspend fun shareBitmap(context: Context, bitmap: Bitmap): Boolean = try {
+        val uri = withContext(Dispatchers.IO) { writePng(context, bitmap) }
+        if (uri == null) {
+            false
+        } else {
+            withContext(Dispatchers.Main) { share(context, uri) }
+            true
+        }
+    } catch (t: Throwable) {
+        AppLog.ar.warn("Summit card share failed", t)
+        false
+    }
+
     /** Read the live SurfaceView pixels into a Bitmap. Returns null if the
      *  surface isn't valid / the copy failed (e.g. AR paused). */
     private suspend fun pixelCopy(view: ARSceneView): Bitmap? {

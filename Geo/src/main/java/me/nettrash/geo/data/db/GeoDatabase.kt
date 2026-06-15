@@ -5,10 +5,11 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [HistoryItem::class, Trip::class], version = 3, exportSchema = false)
+@Database(entities = [HistoryItem::class, Trip::class, SummitLog::class], version = 4, exportSchema = false)
 abstract class GeoDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun tripDao(): TripDao
+    abstract fun summitLogDao(): SummitLogDao
 
     companion object {
         /**
@@ -55,6 +56,34 @@ abstract class GeoDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_trips_startDate` ON `trips` (`startDate`)"
+                )
+            }
+        }
+
+        /**
+         * v3 -> v4: add the `summit_logs` table for the Summit log. NON-
+         * destructive — only creates a new table + its index, so existing
+         * history and trips are preserved. Column names/types/nullability and
+         * the index name MUST match exactly what Room derives from the
+         * [SummitLog] `@Entity`, or post-migration schema validation fails.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `summit_logs` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`peakName` TEXT NOT NULL, " +
+                        "`peakIdentifier` TEXT NOT NULL, " +
+                        "`peakSet` TEXT NOT NULL, " +
+                        "`peakAltitude` INTEGER NOT NULL, " +
+                        "`latitude` REAL NOT NULL, " +
+                        "`longitude` REAL NOT NULL, " +
+                        "`loggedDate` INTEGER NOT NULL, " +
+                        "`measuredAltitude` REAL NOT NULL, " +
+                        "`note` TEXT)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_summit_logs_loggedDate` ON `summit_logs` (`loggedDate`)"
                 )
             }
         }

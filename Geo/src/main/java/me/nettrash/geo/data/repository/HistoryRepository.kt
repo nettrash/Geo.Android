@@ -2,6 +2,8 @@ package me.nettrash.geo.data.repository
 
 import me.nettrash.geo.data.db.HistoryDao
 import me.nettrash.geo.data.db.HistoryItem
+import me.nettrash.geo.data.db.SummitLog
+import me.nettrash.geo.data.db.SummitLogDao
 import me.nettrash.geo.data.db.Trip
 import me.nettrash.geo.data.db.TripDao
 import me.nettrash.geo.data.model.DataItem
@@ -21,7 +23,8 @@ import javax.inject.Singleton
 @Singleton
 class HistoryRepository @Inject constructor(
     private val historyDao: HistoryDao,
-    private val tripDao: TripDao
+    private val tripDao: TripDao,
+    private val summitLogDao: SummitLogDao
 ) {
     private val dateFormatter = SimpleDateFormat("MMM d", Locale.getDefault())
     private val trackingFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -111,6 +114,21 @@ class HistoryRepository @Inject constructor(
     suspend fun getTrips(): List<Trip> = tripDao.getAll()
 
     suspend fun deleteTrip(trip: Trip) = tripDao.delete(trip)
+
+    // ── Summit log ───────────────────────────────────────────────
+    suspend fun saveSummitLog(log: SummitLog): Long = summitLogDao.insert(log)
+
+    suspend fun getSummitLogs(): List<SummitLog> = summitLogDao.getAll()
+
+    suspend fun updateSummitLog(log: SummitLog) = summitLogDao.update(log)
+
+    suspend fun deleteSummitLog(log: SummitLog) = summitLogDao.delete(log)
+
+    /** True if [peakId] was logged within the last [hours] (proximity de-dup). */
+    suspend fun summitLoggedRecently(peakId: String, hours: Long): Boolean {
+        val since = System.currentTimeMillis() - hours * 3_600_000L
+        return summitLogDao.countRecentForPeak(peakId, since) > 0
+    }
 
     /**
      * De-trended 3-hour barometric tendency (storm warning, M5a). Reads

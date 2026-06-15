@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import me.nettrash.geo.data.db.GeoDatabase
 import me.nettrash.geo.data.db.HistoryDao
+import me.nettrash.geo.data.db.SummitLogDao
 import me.nettrash.geo.data.db.TripDao
 import javax.inject.Singleton
 
@@ -23,7 +24,11 @@ object AppModule {
             context,
             GeoDatabase::class.java,
             "geo_database"
-        ).addMigrations(GeoDatabase.MIGRATION_1_2, GeoDatabase.MIGRATION_2_3).build()
+        ).addMigrations(
+            GeoDatabase.MIGRATION_1_2,
+            GeoDatabase.MIGRATION_2_3,
+            GeoDatabase.MIGRATION_3_4
+        ).build()
     }
 
     @Provides
@@ -34,5 +39,10 @@ object AppModule {
     @Provides
     fun provideTripDao(database: GeoDatabase): TripDao {
         return database.tripDao()
+    }
+
+    @Provides
+    fun provideSummitLogDao(database: GeoDatabase): SummitLogDao {
+        return database.summitLogDao()
     }
 }
