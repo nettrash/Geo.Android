@@ -55,6 +55,20 @@ import androidx.compose.ui.layout.ContentScale
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import com.google.maps.android.compose.Circle
+import me.nettrash.geo.offline.OfflinePack
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +77,23 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val mountainsData by viewModel.mountainsData.collectAsState()
     val historyItems by viewModel.historyItems.collectAsState()
     val context = LocalContext.current
+
+    // Offline expedition pack — region circles + "choose an area on the map" flow.
+    val offlinePacks by viewModel.offlinePacks.collectAsState()
+    val offlineDownloading by viewModel.offlinePackDownloading.collectAsState()
+    val offlineProgress by viewModel.offlinePackProgress.collectAsState()
+    val offlineStatus by viewModel.offlinePackStatus.collectAsState()
+    var chooseAreaMode by remember { mutableStateOf(false) }
+    var downloadRadiusKm by remember { mutableStateOf(10.0) }
+    var selectedPack by remember { mutableStateOf<OfflinePack?>(null) }
+    var nameAction by remember { mutableStateOf<MapNameAction?>(null) }
+    var nameText by remember { mutableStateOf("") }
+    // Leave "choose area" mode automatically once a download we started finishes.
+    var wasDownloading by remember { mutableStateOf(false) }
+    LaunchedEffect(offlineDownloading) {
+        if (wasDownloading && !offlineDownloading) chooseAreaMode = false
+        wasDownloading = offlineDownloading
+    }
 
     var selectedMountain by remember { mutableStateOf<MountainInfo?>(null) }
     var selectedHistoryDate by remember { mutableStateOf<Long?>(null) }
@@ -112,7 +143,10 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 compassEnabled = true,
                 myLocationButtonEnabled = true,
                 zoomControlsEnabled = true
-            )
+            ),
+            // Lift the map's zoom controls + Google logo above the offline
+            // control bar at the bottom so the bar doesn't cover/intercept them.
+            contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             // Hoist the per-pin BitmapDescriptors and the marker date
             // formatter so dozens of markers reuse one instance each
@@ -193,6 +227,193 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                     }
                 )
             }
+
+            // Offline expedition pack regions — one orange circle per saved pack
+            // (tap to delete), plus a live blue preview while choosing an area.
+            for (pack in offlinePacks) {
+                Circle(
+                    center = LatLng(pack.centerLat, pack.centerLon),
+                    radius = pack.radiusKm * 1000.0,
+                    fillColor = OFFLINE_ACCENT.copy(alpha = 0.12f),
+                    strokeColor = OFFLINE_ACCENT,
+                    strokeWidth = 4f,
+                    clickable = true,
+                    onClick = { selectedPack = pack }
+                )
+            }
+            if (chooseAreaMode) {
+                Circle(
+                    center = cameraPositionState.position.target,
+                    radius = downloadRadiusKm * 1000.0,
+                    fillColor = PREVIEW_BLUE.copy(alpha = 0.12f),
+                    strokeColor = PREVIEW_BLUE,
+                    strokeWidth = 4f
+                )
+            }
+        }
+
+        // Crosshair marking the area centre while choosing an area to download.
+        if (chooseAreaMode) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = null,
+                tint = PREVIEW_BLUE,
+                modifier = Modifier.align(Alignment.Center).size(40.dp)
+            )
+        }
+
+        // Bottom control bar: "Download a region" → radius chips + Download here,
+        // with live progress while a download runs.
+        Surface(
+            color = Color(0xFF222222),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                when {
+                    !chooseAreaMode -> {
+                        Button(
+                            onClick = { chooseAreaMode = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = OFFLINE_ACCENT),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(stringResource(R.string.offline_download_region), color = Color.White) }
+                    }
+                    offlineDownloading -> {
+                        Text(
+                            if (offlineStatus.isEmpty()) stringResource(R.string.offline_downloading) else offlineStatus,
+                            color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { offlineProgress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = OFFLINE_ACCENT
+                        )
+                    }
+                    else -> {
+                        Text(stringResource(R.string.offline_radius), color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            for (r in OFFLINE_RADII) {
+                                val selected = r == downloadRadiusKm
+                                Button(
+                                    onClick = { downloadRadiusKm = r },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (selected) OFFLINE_ACCENT else Color.Gray.copy(alpha = 0.4f)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) { Text("${r.toInt()} km", color = Color.White, fontSize = 12.sp) }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { chooseAreaMode = false }) {
+                                Text(stringResource(R.string.action_cancel), color = Color.White)
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Button(
+                                onClick = {
+                                    val c = cameraPositionState.position.target
+                                    nameText = ""
+                                    nameAction = MapNameAction.Download(c.latitude, c.longitude, downloadRadiusKm)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = OFFLINE_ACCENT),
+                                shape = RoundedCornerShape(8.dp)
+                            ) { Text(stringResource(R.string.offline_download_here), color = Color.White) }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tap a saved region's circle → rename or delete it.
+        selectedPack?.let { pack ->
+            AlertDialog(
+                onDismissRequest = { selectedPack = null },
+                containerColor = Color(0xFF222222),
+                title = { Text(pack.name, color = Color.White) },
+                text = {
+                    Text(
+                        "${pack.peakCount} peaks · ${pack.cellCount} cells · ${pack.radiusKm.toInt()} km",
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                },
+                confirmButton = {
+                    Row {
+                        TextButton(onClick = {
+                            nameText = pack.name
+                            nameAction = MapNameAction.Rename(pack)
+                            selectedPack = null
+                        }) {
+                            Text(stringResource(R.string.action_rename), color = OFFLINE_ACCENT)
+                        }
+                        TextButton(onClick = { viewModel.deleteOfflinePack(pack); selectedPack = null }) {
+                            Text(stringResource(R.string.action_delete), color = Color(0xFFE57373))
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { selectedPack = null }) {
+                        Text(stringResource(R.string.action_cancel), color = Color.White)
+                    }
+                }
+            )
+        }
+
+        // Name a new area (download) or rename an existing one.
+        nameAction?.let { action ->
+            val titleRes = if (action is MapNameAction.Rename) R.string.offline_rename_title else R.string.offline_name_area
+            AlertDialog(
+                onDismissRequest = { nameAction = null },
+                containerColor = Color(0xFF222222),
+                title = { Text(stringResource(titleRes), color = Color.White) },
+                text = {
+                    OutlinedTextField(
+                        value = nameText,
+                        onValueChange = { nameText = it },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            cursorColor = OFFLINE_ACCENT,
+                            focusedBorderColor = OFFLINE_ACCENT,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.4f)
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        when (action) {
+                            is MapNameAction.Download ->
+                                viewModel.downloadOfflinePackAt(nameText, action.lat, action.lon, action.radiusKm)
+                            is MapNameAction.Rename ->
+                                viewModel.renameOfflinePack(action.pack, nameText)
+                        }
+                        nameAction = null
+                    }) {
+                        Text(
+                            stringResource(
+                                if (action is MapNameAction.Rename) R.string.action_save else R.string.offline_download_here
+                            ),
+                            color = OFFLINE_ACCENT
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { nameAction = null }) {
+                        Text(stringResource(R.string.action_cancel), color = Color.White)
+                    }
+                }
+            )
         }
 
         // Mountain detail sheet
@@ -299,6 +520,16 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
  * who want to spot nearby peaks.
  */
 private const val STREET_ZOOM = 16f
+
+private val OFFLINE_ACCENT = Color(0xFFFF9800)
+private val PREVIEW_BLUE = Color(0xFF2196F3)
+private val OFFLINE_RADII = listOf(5.0, 10.0, 50.0, 100.0)
+
+/** What the Map tab's name dialog is committing — a new download or a rename. */
+private sealed interface MapNameAction {
+    data class Download(val lat: Double, val lon: Double, val radiusKm: Double) : MapNameAction
+    data class Rename(val pack: OfflinePack) : MapNameAction
+}
 
 @Composable
 private fun DetailRow(label: String, value: String) {

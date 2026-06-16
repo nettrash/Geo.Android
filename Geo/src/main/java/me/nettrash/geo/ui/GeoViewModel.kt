@@ -25,6 +25,8 @@ import me.nettrash.geo.data.model.MountainData
 import me.nettrash.geo.data.model.MountainInfo
 import me.nettrash.geo.data.model.MountainList
 import me.nettrash.geo.data.model.NearbyPeak
+import me.nettrash.geo.offline.OfflinePack
+import me.nettrash.geo.offline.OfflinePackRepository
 import java.util.Locale
 import me.nettrash.geo.data.repository.HistoryRepository
 import me.nettrash.geo.data.snapshot.SharedSnapshotStore
@@ -63,7 +65,8 @@ class GeoViewModel @Inject constructor(
     val skylineCalculator: SkylineCalculator,
     /** Exposed publicly so NatureScreen can feed targets in and
      *  read back the occluded-ID set. */
-    val occlusionManager: ArOcclusionManager
+    val occlusionManager: ArOcclusionManager,
+    private val offlinePackRepository: OfflinePackRepository
 ) : ViewModel() {
 
     // Mountain data
@@ -526,10 +529,45 @@ class GeoViewModel @Inject constructor(
     fun searchForPeaks() {
         val loc = locationManager.location.value ?: return
         viewModelScope.launch {
-            val results = peakFinder.searchPeaks(loc, _mountainsData.value, _peaks.value)
+            val results = peakFinder.searchPeaks(
+                loc, _mountainsData.value, _peaks.value,
+                offlinePackRepository.combinedPeaks.value
+            )
             _peaks.value = results
         }
     }
+
+    // ─── Offline expedition pack ──────────────────────────────────────
+    // Pre-cached area (OSM peaks + terrain DEM) so AR/skyline survive a
+    // no-signal summit. The repository seeds the live peak/elevation caches
+    // at launch; these just surface its state + actions to the Info screen.
+    val offlinePacks: StateFlow<List<OfflinePack>> = offlinePackRepository.packs
+    val offlinePackDownloading: StateFlow<Boolean> = offlinePackRepository.isDownloading
+    val offlinePackProgress: StateFlow<Float> = offlinePackRepository.progress
+    val offlinePackStatus: StateFlow<String> = offlinePackRepository.statusText
+
+    /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
+    fun downloadOfflinePack(name: String, radiusKm: Double) {
+        val loc = locationManager.location.value ?: return
+        // Off the Main dispatcher: createPack builds the ~3600-point skyline grid
+        // and merges results on the caller thread (the network calls re-dispatch
+        // to IO themselves), so keep that CPU work off the UI thread.
+        viewModelScope.launch(Dispatchers.Default) {
+            offlinePackRepository.createPack(name, loc.latitude, loc.longitude, radiusKm)
+        }
+    }
+
+    fun deleteOfflinePack(pack: OfflinePack) = offlinePackRepository.delete(pack)
+
+    /** Download a pack centred on an explicit map point (used by the Map tab's
+     *  "choose area" flow) rather than the current GPS location. */
+    fun downloadOfflinePackAt(name: String, centerLat: Double, centerLon: Double, radiusKm: Double) {
+        viewModelScope.launch(Dispatchers.Default) {
+            offlinePackRepository.createPack(name, centerLat, centerLon, radiusKm)
+        }
+    }
+
+    fun renameOfflinePack(pack: OfflinePack, newName: String) = offlinePackRepository.rename(pack, newName)
 
     fun loadARHistoryPoints() {
         val userLoc = locationManager.location.value ?: return

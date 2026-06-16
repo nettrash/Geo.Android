@@ -53,22 +53,12 @@ class SkylineCalculator @Inject constructor(
     /** Distance the observer must move before we re-run. */
     private val recomputeDistanceM = 500.0
 
-    private val bearingStepDeg = 2.0
-    private val maxRangeMeters = 200_000.0
-
-    /**
-     * Distance grid sampled along each bearing ray. Consecutive
-     * ratio ≤ 1.5× so no real ridge falls into a sampling gap —
-     * earlier doubling steps (8 → 16 → 32 km) missed prominent
-     * peaks that happened to sit in the middle of a gap. 20 entries
-     * out to 200 km matches the brief's prescription byte-for-byte.
-     */
-    private val distancesMeters: List<Double> = listOf(
-        100.0, 200.0, 400.0, 600.0, 800.0,
-        1_000.0, 1_500.0, 2_000.0, 3_000.0, 5_000.0,
-        7_000.0, 10_000.0, 15_000.0, 22_000.0, 32_000.0,
-        48_000.0, 70_000.0, 100_000.0, 140_000.0, 200_000.0
-    )
+    // Instance aliases for the shared schedule (see the companion). The
+    // offline-pack prefetch reuses the same constants, so a divergent grid
+    // can't leave offline-skyline holes.
+    private val bearingStepDeg = BEARING_STEP_DEG
+    private val maxRangeMeters = MAX_RANGE_METERS
+    private val distancesMeters: List<Double> = DISTANCES_METERS
 
     private var lastObserver: Location? = null
     private var currentJob: Job? = null
@@ -191,5 +181,44 @@ class SkylineCalculator @Inject constructor(
         bestPerBearing.values
             .map { it.first }
             .sortedBy { it.bearing }
+    }
+
+    companion object {
+        const val BEARING_STEP_DEG = 2.0
+        const val MAX_RANGE_METERS = 200_000.0
+
+        /**
+         * Distance grid sampled along each bearing ray. Consecutive
+         * ratio ≤ 1.5× so no real ridge falls into a sampling gap —
+         * earlier doubling steps (8 → 16 → 32 km) missed prominent
+         * peaks that happened to sit in the middle of a gap. 20 entries
+         * out to 200 km matches the brief's prescription byte-for-byte.
+         */
+        val DISTANCES_METERS: List<Double> = listOf(
+            100.0, 200.0, 400.0, 600.0, 800.0,
+            1_000.0, 1_500.0, 2_000.0, 3_000.0, 5_000.0,
+            7_000.0, 10_000.0, 15_000.0, 22_000.0, 32_000.0,
+            48_000.0, 70_000.0, 100_000.0, 140_000.0, 200_000.0
+        )
+
+        /**
+         * Every (bearing × distance) sample coordinate around (lat, lon)
+         * as raw (lat, lon) pairs — the same grid [computeSkyline] builds
+         * inline. The offline-pack prefetch caches exactly these cells so
+         * a future offline skyline has no holes.
+         */
+        fun skylineGridCoordinates(lat: Double, lon: Double): List<Pair<Double, Double>> {
+            val out = ArrayList<Pair<Double, Double>>()
+            var bearing = 0.0
+            while (bearing < 360.0) {
+                for (d in DISTANCES_METERS) {
+                    if (d > MAX_RANGE_METERS) continue
+                    val (pLat, pLon) = GeoCalculations.project(lat, lon, bearingDeg = bearing, distance = d)
+                    out.add(pLat to pLon)
+                }
+                bearing += BEARING_STEP_DEG
+            }
+            return out
+        }
     }
 }

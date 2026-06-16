@@ -87,6 +87,8 @@
     <string name="action_save">Save</string>
     <string name="action_close">Close</string>
     <string name="action_delete">Delete</string>
+    <string name="action_done">Done</string>
+    <string name="action_rename">Rename</string>
     <string name="action_clear_history">Clear history</string>
     <string name="clear_history_title">Clear history?</string>
     <string name="clear_history_message">This permanently deletes all recorded history and cannot be undone.</string>
@@ -173,6 +175,26 @@
         <item quantity="one">%1$d marker</item>
         <item quantity="other">%1$d markers</item>
     </plurals>
+
+    <!-- Offline expedition pack (keys mirror iOS Localizable.strings literals) -->
+    <string name="offline_expedition_pack">Expedition pack</string>
+    <string name="offline_no_areas">No areas saved</string>
+    <string name="offline_downloading">Downloading…</string>
+    <string name="offline_manage">Manage offline areas</string>
+    <string name="offline_packs_title">Offline packs</string>
+    <string name="offline_section_download">DOWNLOAD CURRENT AREA</string>
+    <string name="offline_waiting_gps">Waiting for a GPS fix…</string>
+    <string name="offline_name_optional">Name (optional)</string>
+    <string name="offline_radius">Radius</string>
+    <string name="offline_download_area">Download this area</string>
+    <string name="offline_section_saved">SAVED PACKS</string>
+    <string name="offline_none_yet">None yet</string>
+    <string name="offline_footer">Caches the area\'s named peaks and the terrain skyline so the AR Nature view works with no signal. Map tiles aren\'t included (provider licensing).</string>
+    <string name="offline_download_region">Download a region</string>
+    <string name="offline_download_here">Download here</string>
+    <string name="offline_delete_title">Delete offline area?</string>
+    <string name="offline_name_area">Name this area</string>
+    <string name="offline_rename_title">Rename area</string>
 
     <!-- Permission banner (location / motion) -->
     <string name="permissions_banner_headline_both">Location &amp; motion access required</string>
