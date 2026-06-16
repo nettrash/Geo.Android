@@ -150,6 +150,21 @@ class OfflinePackRepository @Inject constructor(
         }
     }
 
+    /** Rename a saved pack. The name lives only in the index (not the DEM/peak
+     *  payload), so this just rewrites the index — no cache reseed needed. A
+     *  blank name is ignored (keeps the current name). */
+    fun rename(pack: OfflinePack, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        scope.launch {
+            val updated = _packs.value
+                .map { if (it.id == pack.id) it.copy(name = trimmed) else it }
+                .sortedByDescending { it.createdAt }
+            store.saveIndex(updated)
+            _packs.value = updated
+        }
+    }
+
     /** Rebuild [combinedPeaks] and the elevation service's pinned cells from
      *  every saved pack. Called at launch and after any pack change. */
     private suspend fun reseed() {

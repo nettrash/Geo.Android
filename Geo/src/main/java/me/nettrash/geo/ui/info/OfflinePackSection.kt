@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -89,6 +90,7 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
             hasLocation = location != null,
             onDownload = { name, radius -> viewModel.downloadOfflinePack(name, radius) },
             onDelete = { viewModel.deleteOfflinePack(it) },
+            onRename = { pack, newName -> viewModel.renameOfflinePack(pack, newName) },
             onDismiss = { showManager = false }
         )
     }
@@ -103,12 +105,15 @@ private fun OfflinePackManagerDialog(
     hasLocation: Boolean,
     onDownload: (String, Double) -> Unit,
     onDelete: (OfflinePack) -> Unit,
+    onRename: (OfflinePack, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var radiusKm by remember { mutableStateOf(10.0) }
     val radii = listOf(5.0, 10.0, 50.0, 100.0)
     val dateFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
+    var renamingPack by remember { mutableStateOf<OfflinePack?>(null) }
+    var renameText by remember { mutableStateOf("") }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF222222)) {
@@ -195,23 +200,29 @@ private fun OfflinePackManagerDialog(
                     Text(stringResource(R.string.offline_none_yet), color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
                 } else {
                     for (pack in packs) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(pack.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "${pack.peakCount} peaks · ${pack.cellCount} cells · ${pack.radiusKm.toInt()} km",
-                                    color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp
-                                )
-                                Text(
-                                    dateFormat.format(Date(pack.createdAt)),
-                                    color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp
-                                )
-                            }
-                            TextButton(onClick = { onDelete(pack) }) {
-                                Text(stringResource(R.string.action_delete), color = Color(0xFFE57373), fontSize = 12.sp)
+                        // Info stacked full-width, with the Rename/Delete actions on
+                        // their own row beneath — so the "… · 100 km" detail line has
+                        // the full width and doesn't wrap.
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Text(pack.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${pack.peakCount} peaks · ${pack.cellCount} cells · ${pack.radiusKm.toInt()} km",
+                                color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp
+                            )
+                            Text(
+                                dateFormat.format(Date(pack.createdAt)),
+                                color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(onClick = { renameText = pack.name; renamingPack = pack }) {
+                                    Text(stringResource(R.string.action_rename), color = ACCENT, fontSize = 12.sp)
+                                }
+                                TextButton(onClick = { onDelete(pack) }) {
+                                    Text(stringResource(R.string.action_delete), color = Color(0xFFE57373), fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -229,5 +240,38 @@ private fun OfflinePackManagerDialog(
                 }
             }
         }
+    }
+
+    renamingPack?.let { pack ->
+        AlertDialog(
+            onDismissRequest = { renamingPack = null },
+            containerColor = Color(0xFF222222),
+            title = { Text(stringResource(R.string.offline_rename_title), color = Color.White) },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = ACCENT,
+                        focusedBorderColor = ACCENT,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.4f)
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onRename(pack, renameText); renamingPack = null }) {
+                    Text(stringResource(R.string.action_save), color = ACCENT)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingPack = null }) {
+                    Text(stringResource(R.string.action_cancel), color = Color.White)
+                }
+            }
+        )
     }
 }

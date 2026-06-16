@@ -41,7 +41,11 @@ one recorded here.
   request throttling + retry so it stays polite to the free Overpass /
   Open-Elevation APIs, and everything stays on device (DEM cells are *pinned* so
   they outlive the normal cache eviction). **Offline data & AR only** — map tiles
-  aren't cached (Google Maps licensing).
+  aren't cached (Google Maps licensing). On the **Map tab**, saved areas are shown
+  as circles and you can **download a new area by framing it on the map** (a
+  "Download a region" mode with a crosshair + radius + live preview). Packs can be
+  **named when downloaded and renamed afterwards**, and tapping a region on the map
+  lets you rename or delete it.
 - **Peak labels welded to the terrain skyline** — in the Nature (AR) view, named
   peaks that form the horizon silhouette now float their name + elevation ("Mont
   Blanc 4808 m") right on the green ridge line, turning the abstract skyline into

@@ -559,6 +559,16 @@ class GeoViewModel @Inject constructor(
 
     fun deleteOfflinePack(pack: OfflinePack) = offlinePackRepository.delete(pack)
 
+    /** Download a pack centred on an explicit map point (used by the Map tab's
+     *  "choose area" flow) rather than the current GPS location. */
+    fun downloadOfflinePackAt(name: String, centerLat: Double, centerLon: Double, radiusKm: Double) {
+        viewModelScope.launch(Dispatchers.Default) {
+            offlinePackRepository.createPack(name, centerLat, centerLon, radiusKm)
+        }
+    }
+
+    fun renameOfflinePack(pack: OfflinePack, newName: String) = offlinePackRepository.rename(pack, newName)
+
     fun loadARHistoryPoints() {
         val userLoc = locationManager.location.value ?: return
         viewModelScope.launch {
