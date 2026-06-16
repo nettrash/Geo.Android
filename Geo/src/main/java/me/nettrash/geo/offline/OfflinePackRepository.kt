@@ -75,14 +75,18 @@ class OfflinePackRepository @Inject constructor(
      * No-ops if a download is already running; publishes progress as it goes.
      */
     suspend fun createPack(name: String, centerLat: Double, centerLon: Double, radiusKm: Double) {
-        if (_isDownloading.value) return
-        _isDownloading.value = true
+        // Atomic check-then-set so a double-tap (or a caller on a multi-threaded
+        // dispatcher) can't slip two concurrent downloads past a plain read+write.
+        if (!_isDownloading.compareAndSet(expect = false, update = true)) return
         _progress.value = 0f
         _statusText.value = "Finding peaks…"
         try {
             // 1. Peaks across the whole radius (one throttled Overpass query).
             val osm = peakFinder.fetchPeaksForArea(centerLat, centerLon, radiusKm * 1000.0)
-            val peaks = osm.take(maxPackPeaks)
+            // Keep the CLOSEST peaks when capping — Overpass returns nodes in
+            // arrival order, not by distance, so a naive take could drop nearby
+            // peaks while keeping far ones. Mirrors the live PeakFinder path.
+            val peaks = osm.sortedBy { it.distance }.take(maxPackPeaks)
 
             // 2. DEM: the centre's full skyline panorama (180×20 polar grid),
             //    fetched in chunks for progress; each chunk goes through the
@@ -109,15 +113,18 @@ class OfflinePackRepository @Inject constructor(
             }
             val cells = cellMap.map { (k, v) -> ElevationCacheStore.Entry(k.first, k.second, v) }
 
-            // 3. Persist + register.
+            // 3. Persist + register. Bail (without recording a metadata entry)
+            //    if the data file didn't actually persist — a failed write would
+            //    otherwise leave a phantom pack that can never be re-seeded.
             val id = UUID.randomUUID().toString()
-            store.saveData(
+            val saved = store.saveData(
                 id,
                 OfflinePackData(
                     peaks = peaks.map { PackPeak(it.name, it.latitude, it.longitude, it.altitude) },
                     cells = cells
                 )
             )
+            if (!saved) return
             val packName = name.trim().ifEmpty { defaultName(centerLat, centerLon) }
             val meta = OfflinePack(
                 id = id, name = packName,
@@ -147,17 +154,8 @@ class OfflinePackRepository @Inject constructor(
      *  every saved pack. Called at launch and after any pack change. */
     private suspend fun reseed() {
         val metas = store.loadIndex().sortedByDescending { it.createdAt }
-        val cells = ArrayList<ElevationCacheStore.Entry>()
-        val peaks = ArrayList<NearbyPeak>()
-        val seen = HashSet<UUID>()
-        for (m in metas) {
-            val data = store.loadData(m.id) ?: continue
-            cells.addAll(data.cells)
-            for (p in data.peaks) {
-                val np = NearbyPeak.create(p.name, p.lat, p.lon, p.altitude, 0.0, 0.0)
-                if (seen.add(np.id)) peaks.add(np)
-            }
-        }
+        val datas = metas.mapNotNull { store.loadData(it.id) }
+        val (cells, peaks) = assembleSeed(datas)
         terrain.setPinned(cells)
         _packs.value = metas
         _combinedPeaks.value = peaks
@@ -165,4 +163,30 @@ class OfflinePackRepository @Inject constructor(
 
     private fun defaultName(lat: Double, lon: Double): String =
         String.format(Locale.US, "Area %.3f, %.3f", lat, lon)
+
+    companion object {
+        /**
+         * Pure assembly of the live-cache seed from loaded pack payloads: union
+         * the DEM cells (later packs win on a key collision) and dedupe peaks by
+         * their coordinate-derived id. Pure + side-effect-free so it's unit-
+         * testable without files or the Android context. Mirrors iOS
+         * `OfflinePackManager.assembleSeed`.
+         */
+        fun assembleSeed(
+            datas: List<OfflinePackData>
+        ): Pair<List<ElevationCacheStore.Entry>, List<NearbyPeak>> {
+            val cellMap = LinkedHashMap<Pair<Int, Int>, Double>()
+            val peaks = ArrayList<NearbyPeak>()
+            val seen = HashSet<UUID>()
+            for (data in datas) {
+                for (c in data.cells) cellMap[c.lat to c.lon] = c.elev
+                for (p in data.peaks) {
+                    val np = NearbyPeak.create(p.name, p.lat, p.lon, p.altitude, 0.0, 0.0)
+                    if (seen.add(np.id)) peaks.add(np)
+                }
+            }
+            val cells = cellMap.map { (k, v) -> ElevationCacheStore.Entry(k.first, k.second, v) }
+            return cells to peaks
+        }
+    }
 }

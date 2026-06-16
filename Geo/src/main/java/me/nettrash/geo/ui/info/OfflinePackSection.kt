@@ -28,10 +28,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import me.nettrash.geo.R
 import me.nettrash.geo.offline.OfflinePack
 import me.nettrash.geo.ui.GeoViewModel
 import java.text.SimpleDateFormat
@@ -55,11 +57,11 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
     var showManager by remember { mutableStateOf(false) }
 
     InfoCard(watermark = "OFFLINE") {
-        InfoRow("Expedition pack") {
-            MonoText(if (packs.isEmpty()) "No areas saved" else "${packs.size} saved")
+        InfoRow(stringResource(R.string.offline_expedition_pack)) {
+            MonoText(if (packs.isEmpty()) stringResource(R.string.offline_no_areas) else "${packs.size} saved")
         }
         if (downloading) {
-            InfoRow(if (status.isEmpty()) "Downloading…" else status) {
+            InfoRow(if (status.isEmpty()) stringResource(R.string.offline_downloading) else status) {
                 MonoText("${(progress * 100).toInt()}%")
             }
         }
@@ -73,7 +75,7 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
                 colors = ButtonDefaults.buttonColors(containerColor = ACCENT),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text("Manage offline areas", fontSize = 12.sp, color = Color.White)
+                Text(stringResource(R.string.offline_manage), fontSize = 12.sp, color = Color.White)
             }
         }
     }
@@ -116,18 +118,18 @@ private fun OfflinePackManagerDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                Text("Offline packs", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.offline_packs_title), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(14.dp))
 
-                Text("DOWNLOAD CURRENT AREA", color = ACCENT, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.offline_section_download), color = ACCENT, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 if (!hasLocation) {
-                    Text("Waiting for a GPS fix…", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                    Text(stringResource(R.string.offline_waiting_gps), color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
                 } else {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Name (optional)") },
+                        label = { Text(stringResource(R.string.offline_name_optional)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -141,7 +143,7 @@ private fun OfflinePackManagerDialog(
                         )
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text("Radius", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Text(stringResource(R.string.offline_radius), color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -164,7 +166,7 @@ private fun OfflinePackManagerDialog(
                     Spacer(Modifier.height(12.dp))
                     if (downloading) {
                         Text(
-                            if (status.isEmpty()) "Downloading…" else status,
+                            if (status.isEmpty()) stringResource(R.string.offline_downloading) else status,
                             color = Color.White.copy(alpha = 0.7f),
                             fontSize = 12.sp
                         )
@@ -181,16 +183,16 @@ private fun OfflinePackManagerDialog(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Download this area", color = Color.White)
+                            Text(stringResource(R.string.offline_download_area), color = Color.White)
                         }
                     }
                 }
 
                 Spacer(Modifier.height(18.dp))
-                Text("SAVED PACKS", color = ACCENT, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.offline_section_saved), color = ACCENT, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 if (packs.isEmpty()) {
-                    Text("None yet", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                    Text(stringResource(R.string.offline_none_yet), color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
                 } else {
                     for (pack in packs) {
                         Row(
@@ -209,7 +211,7 @@ private fun OfflinePackManagerDialog(
                                 )
                             }
                             TextButton(onClick = { onDelete(pack) }) {
-                                Text("Delete", color = Color(0xFFE57373), fontSize = 12.sp)
+                                Text(stringResource(R.string.action_delete), color = Color(0xFFE57373), fontSize = 12.sp)
                             }
                         }
                     }
@@ -217,13 +219,13 @@ private fun OfflinePackManagerDialog(
 
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    "Caches the area's named peaks and the terrain skyline so the AR Nature view works with no signal. Map tiles aren't included (provider licensing).",
+                    stringResource(R.string.offline_footer),
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 11.sp
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss) { Text("Done", color = ACCENT) }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_done), color = ACCENT) }
                 }
             }
         }

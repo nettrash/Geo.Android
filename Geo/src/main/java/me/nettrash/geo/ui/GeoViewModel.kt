@@ -549,7 +549,10 @@ class GeoViewModel @Inject constructor(
     /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
     fun downloadOfflinePack(name: String, radiusKm: Double) {
         val loc = locationManager.location.value ?: return
-        viewModelScope.launch {
+        // Off the Main dispatcher: createPack builds the ~3600-point skyline grid
+        // and merges results on the caller thread (the network calls re-dispatch
+        // to IO themselves), so keep that CPU work off the UI thread.
+        viewModelScope.launch(Dispatchers.Default) {
             offlinePackRepository.createPack(name, loc.latitude, loc.longitude, radiusKm)
         }
     }

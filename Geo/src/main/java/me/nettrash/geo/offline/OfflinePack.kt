@@ -107,11 +107,16 @@ class OfflinePackStore(private val context: Context) {
         }
     }
 
-    suspend fun saveData(id: String, data: OfflinePackData) = withContext(Dispatchers.IO) {
+    /** Returns whether the pack's data file actually persisted, so the caller
+     *  can avoid recording a metadata entry whose payload is missing (a phantom
+     *  pack that can never be re-seeded). */
+    suspend fun saveData(id: String, data: OfflinePackData): Boolean = withContext(Dispatchers.IO) {
         try {
             writeAtomic(dataFile(id), json.encodeToString(data))
+            true
         } catch (t: Throwable) {
             AppLog.app.warn("Offline pack data save failed", t)
+            false
         }
     }
 
