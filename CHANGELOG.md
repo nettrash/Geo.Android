@@ -29,6 +29,19 @@ one recorded here.
   drops their AR markers, tap targets, occlusion work and the on-screen counter.)
 
 ### Added
+- **Offline expedition pack** — pre-cache an area before you lose signal so the
+  Nature (AR) view keeps working on a no-signal summit, where the peaks and terrain
+  skyline silently went empty before. From the **Info tab → "Manage offline
+  areas"**, download the area around your current location at a chosen radius
+  (5 / 10 / 50 / 100 km): Geo fetches the area's named OpenStreetMap peaks and the
+  terrain DEM for the skyline panorama and stores them on-device. Offline, those
+  peaks reappear (AR markers + welded ridge labels) and the skyline resolves from
+  the cached terrain — no live calls. Saved packs list their peak/cell counts and
+  date and can be deleted. The bounding-box prefetch reuses the app's existing
+  request throttling + retry so it stays polite to the free Overpass /
+  Open-Elevation APIs, and everything stays on device (DEM cells are *pinned* so
+  they outlive the normal cache eviction). **Offline data & AR only** — map tiles
+  aren't cached (Google Maps licensing).
 - **Peak labels welded to the terrain skyline** — in the Nature (AR) view, named
   peaks that form the horizon silhouette now float their name + elevation ("Mont
   Blanc 4808 m") right on the green ridge line, turning the abstract skyline into

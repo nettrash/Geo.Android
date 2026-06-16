@@ -339,6 +339,8 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
             }
         }
 
+        OfflineExpeditionCard(viewModel = viewModel)
+
         Spacer(modifier = Modifier.height(16.dp))
         } // Column
 

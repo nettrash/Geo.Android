@@ -64,6 +64,13 @@ class TerrainElevationService @Inject constructor(
     }
     private val cacheLock = Mutex()
 
+    /** Cells from downloaded **offline expedition packs**, keyed exactly
+     *  like [cache]. Consulted on every cache miss and NEVER LRU-evicted,
+     *  so a prefetched area's terrain skyline keeps resolving from cache
+     *  with no signal. Replaced wholesale from the saved packs by
+     *  `OfflinePackRepository` at launch and whenever a pack changes. */
+    @Volatile private var pinned: Map<GridKey, Double> = emptyMap()
+
     /** Durable backing for [cache] so terrain elevations survive process
      *  death and offline sessions. */
     private val store = ElevationCacheStore(context)
@@ -109,7 +116,14 @@ class TerrainElevationService @Inject constructor(
         cacheLock.withLock {
             for ((i, p) in points.withIndex()) {
                 val key = gridKey(p.first, p.second)
-                cache[key]?.let { results[i] = it } ?: pending.add(i to key)
+                val cached = cache[key]
+                if (cached != null) {
+                    results[i] = cached
+                } else {
+                    // Offline-pack cell — durable, never LRU-evicted.
+                    val pin = pinned[key]
+                    if (pin != null) results[i] = pin else pending.add(i to key)
+                }
             }
         }
         if (pending.isEmpty()) return@withContext results.toList()
@@ -145,6 +159,13 @@ class TerrainElevationService @Inject constructor(
     suspend fun clearCache() {
         cacheLock.withLock { cache.clear() }
         store.save(emptyList())
+    }
+
+    /** Replace the *pinned* offline-pack cells (consulted on every cache
+     *  miss, never evicted). Rebuilt wholesale by `OfflinePackRepository`,
+     *  so passing the union of all packs' cells is the whole contract. */
+    fun setPinned(cells: List<ElevationCacheStore.Entry>) {
+        pinned = cells.associate { GridKey(it.lat, it.lon) to it.elev }
     }
 
     /** Snapshot the cache (under the lock) in LRU order and persist it.
@@ -201,10 +222,7 @@ class TerrainElevationService @Inject constructor(
     // ─── Quantisation ─────────────────────────────────────────────
 
     private fun gridKey(lat: Double, lon: Double): GridKey =
-        GridKey(
-            lat = Math.round(lat * 1000.0).toInt(),
-            lon = Math.round(lon * 1000.0).toInt()
-        )
+        GridKey(lat = milliDeg(lat), lon = milliDeg(lon))
 
     private fun GridKey.toCoord(): Coord =
         Coord(lat / 1000.0, lon / 1000.0)
@@ -227,6 +245,11 @@ class TerrainElevationService @Inject constructor(
          * grid math, matching iOS.
          */
         fun quantise(value: Double): Double = Math.round(value * 1000.0) / 1000.0
+
+        /** Integer milli-degree grid index for a coordinate component —
+         *  the in-memory `GridKey` form. Exposed so `OfflinePackRepository`
+         *  builds pinned-cell keys that line up with live lookups. */
+        fun milliDeg(value: Double): Int = Math.round(value * 1000.0).toInt()
     }
 }
 
