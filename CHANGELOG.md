@@ -6,27 +6,13 @@ Play `versionCode`; note that `versionCode` auto-increments on every
 assemble/bundle, so the value actually uploaded to Play may be higher than the
 one recorded here.
 
-## [Unreleased]
+## [1.1] — 2026-06-17
 
-### Fixed
-- **Nature (AR) overlay pointed the wrong way** — the skyline, peak markers and
-  cardinal labels were placed against ARCore's world frame, which (without the
-  Geospatial API) is aligned to **gravity only**, not true north — its yaw is
-  wherever the phone faced at session start. So the whole overlay was rotated off
-  reality, while iOS is correct because ARKit's `gravityAndHeading` frame is
-  magnetometer-aligned. Geo now measures the offset between the device's true
-  compass heading (rotation-vector azimuth + magnetic declination) and the ARCore
-  pose heading, and rotates every projected point by it in one place
-  (`projectToScreen`), so the overlay aligns with true north and the real horizon.
-  The correction is smoothed to reject magnetometer jitter; AR tracking is
-  unaffected (the offset is ~constant). Long-press the AR top bar to see the live
-  ARCore/compass/corrected headings under **heading (true-north align)**.
-
-### Changed
-- **History points are no longer shown in the AR (Nature) scene** — they cluttered
-  the camera view, so the AR overlay now shows only peaks and the skyline. Your
-  recorded history is unchanged and still appears on the Map and Stat tabs. (Also
-  drops their AR markers, tap targets, occlusion work and the on-screen counter.)
+A correctness, accuracy and reliability release with a major Nature/AR upgrade:
+a critical first-run fix, a hard-crash fix, calibrated altitude that agrees
+across phone/widget/Watch, and a Nature (AR) view that gains offline expedition
+packs, peak names welded to the terrain skyline, a summit log and
+tap-to-identify — plus dozens of verified bug fixes and improvements.
 
 ### Added
 - **Offline expedition pack** — pre-cache an area before you lose signal so the
@@ -39,7 +25,7 @@ one recorded here.
   the cached terrain — no live calls. Saved packs list their peak/cell counts and
   date and can be deleted. The bounding-box prefetch reuses the app's existing
   request throttling + retry so it stays polite to the free Overpass /
-  Open-Elevation APIs, and everything stays on device (DEM cells are *pinned* so
+  Open-Meteo APIs, and everything stays on device (DEM cells are *pinned* so
   they outlive the normal cache eviction). **Offline data & AR only** — map tiles
   aren't cached (Google Maps licensing). On the **Map tab**, saved areas are shown
   as circles and you can **download a new area by framing it on the map** (a
@@ -66,44 +52,13 @@ one recorded here.
   Room `summit_logs` table, non-destructive `MIGRATION_3_4`, migration-tested);
   only the peak's public location is stored or shared, never yours.
 - **Tap-to-identify AR markers + freeze-frame share** — the Nature (AR) view is now
-  explorable: tap any peak or history marker to open a detail sheet (name, altitude,
-  distance, bearing, coordinates, plus a Directions button), via a screen-space
+  explorable: tap any peak to open a detail sheet (name, altitude, distance,
+  bearing, coordinates, plus a Directions button), via a screen-space
   nearest-marker hit-test against the same live projection that places the markers
   (offset to the marker's measured centre). A shutter button captures a **frozen,
   annotated panorama** — the live ARCore camera frame (`PixelCopy`) with the marker +
   skyline Compose overlay (`GraphicsLayer`) composited on top and a small "Geo"
   footer — and shares it via a new `FileProvider`. 100 % on-device; nothing is uploaded.
-
-## [1.1] — 2026-06-14
-
-A correctness, accuracy and reliability release: a critical first-run fix, a
-hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus
-39 verified bug fixes and 24 improvements.
-
-### Fixed
-- **Critical:** on first launch, location/altitude/history did not start until
-  the app was killed and reopened — GPS now re-subscribes when the location
-  permission is granted.
-- **Crash:** the "Directions" buttons hard-crashed on devices without Google
-  Maps installed — now use a generic `geo:` intent wrapped in `runCatching`.
-- Background widget/history altitude ignored the fetched QNH and showed a
-  weather-biased value; QNH is now persisted (DataStore) and the worker derives
-  a calibrated altitude that matches the foreground app.
-- Wear: the tile ignored the phone calibration on live samples; Wear barometer
-  and calibration state are now persisted and restored across relaunches.
-- Wear → phone barometer backfill now works (the inbound listener was dead code),
-  so watch-captured history reaches the phone.
-- Home-screen widget: no-data state instead of authoritative `0 m / 0 kPa / 0,0`;
-  staleness cue for old data; reconfigure now preserves your toggle choices.
-- History DB no longer rebuilt with 4 full scans on every insert (dirty-flag +
-  single fetch); added a `recordDate` index (Room migration 1→2, non-destructive)
-  and a daily-rollover record.
-- Peak identity uses the full 128-bit coordinates (no 64-bit collisions);
-  Overpass coordinate quantisation uses round-half consistently.
-- Sensors pause when the app/Watch is backgrounded; `WearInboundListener`
-  throttle is now atomic; assorted AR/skyline fixes.
-
-### Added
 - **Known-elevation manual calibration** — pin the altimeter to a trailhead or
   summit marker ("I am at X m") from the Info barometer card for instant,
   weather-proof, offline accuracy. Inverts the barometric formula to back-solve the
@@ -147,18 +102,101 @@ hard-crash fix, calibrated altitude that agrees across phone/widget/Watch, plus
   stop AR marker jitter.
 - Map markers and date formatter are now hoisted (`remember`d) instead of
   re-allocated per recomposition.
+- In-app **data-source attribution** (OpenStreetMap, Open-Meteo, Google) on the
+  Info tab.
 
 ### Changed
+- **History points are no longer shown in the AR (Nature) scene** — they cluttered
+  the camera view, so the AR overlay now shows only peaks and the skyline. Your
+  recorded history is unchanged and still appears on the Map and Stat tabs. (Also
+  drops their AR markers, tap targets, occlusion work and the on-screen counter.)
+- **Terrain elevation now comes from Open-Meteo** instead of the public
+  Open-Elevation endpoint, which was frequently down/timing out and left the AR
+  skyline (and its welded peak labels) blank. The cold skyline fetch now also runs
+  its batches concurrently, cutting the first load from ~7–15 s to ~1–2 s.
 - Altitude uses the international lapse-rate formula via a shared `Atmosphere`
   helper; one precise Everest constant (8848.86 m); live pressure clamped to
   300–1100 hPa.
 - Stat day-buckets anchored to today; altitude-graph padding unified.
 - The app is **English-only**.
 
+### Fixed
+- **AR terrain skyline now loads reliably** — the elevation data behind the green
+  terrain skyline (and the peak names welded to it) came from a public API
+  (Open-Elevation) that was frequently down / timing out, which left the skyline
+  blank and every peak shown as a plain flat marker instead of a welded ridge
+  pill. Switched to the **Open-Meteo** elevation API (already used for
+  weather/QNH) — fast, reliable, and no key.
+- **Offline skyline now works anywhere in a downloaded area** — the offline
+  expedition pack used to cache terrain only along a fan from the area's exact
+  centre, so the AR skyline (and the peaks welded to it) went blank once you
+  moved away from that centre point with no signal. Packs now cache a regular
+  terrain grid over the whole area, so the skyline resolves offline from any
+  point inside it (capped per pack to keep the download and storage bounded).
+- **Welded peak labels de-collide at the correct spacing** — they were packed
+  ~2.7× too tightly on Android; the spacing now matches iOS so a crowded ridge
+  thins its overlapping name-pills the same way on both platforms.
+- **Stale "ghost" markers on re-entering the Nature tab** — markers occluded in a
+  previous AR session stayed hidden for ~a second after returning to the tab,
+  because the occlusion state survived on the shared singleton. It's now reset
+  when a new AR session starts (matching iOS's fresh-per-view behaviour).
+- **Offline-pack downloads can no longer be stalled by a server** — a hostile or
+  misconfigured `Retry-After` header is now capped at 5 s (matching iOS) instead
+  of being honoured for minutes/hours on a network thread.
+- **AR tracking smoothness + hot-path cleanup** — the faster compass sampling the
+  AR view asks for is no longer ignored when the Info tab started the sensor
+  first; per-frame vertical-plane work is throttled off the 60 fps render path;
+  the depth-occlusion projection now uses one consistent frame snapshot; and the
+  skyline bearing lookups now binary-search the sorted samples (O(log n)).
+- **More reliable storm warning** — barometric samples captured without a GPS fix
+  used to record a fake 0 m altitude, which threw off the pressure-tendency
+  de-trend (it corrects each sample for its altitude) and could trip a false
+  alert or mask a real one. Such samples now carry the last known altitude
+  forward; a genuine sea-level reading is unaffected.
+- **AR warm-up now matches iOS** — before the camera locked tracking, the Nature
+  view briefly placed peaks with an approximate heading-only fallback that could
+  jump once real tracking kicked in. It now shows just the camera + crosshair
+  until tracking is ready, exactly like iOS.
+- **Nature (AR) overlay pointed the wrong way** — the skyline, peak markers and
+  cardinal labels were placed against ARCore's world frame, which (without the
+  Geospatial API) is aligned to **gravity only**, not true north — its yaw is
+  wherever the phone faced at session start. So the whole overlay was rotated off
+  reality, while iOS is correct because ARKit's `gravityAndHeading` frame is
+  magnetometer-aligned. Geo now measures the offset between the device's true
+  compass heading (rotation-vector azimuth + magnetic declination) and the ARCore
+  pose heading, and rotates every projected point by it in one place
+  (`projectToScreen`); the offset converges quickly then HOLDS, so the overlay
+  stays welded to true north and the real horizon without drifting as you pan.
+  Long-press the AR top bar to see the live ARCore/compass/corrected headings
+  under **heading (true-north align)**.
+- **Critical:** on first launch, location/altitude/history did not start until
+  the app was killed and reopened — GPS now re-subscribes when the location
+  permission is granted.
+- **Crash:** the "Directions" buttons hard-crashed on devices without Google
+  Maps installed — now use a generic `geo:` intent wrapped in `runCatching`.
+- Background widget/history altitude ignored the fetched QNH and showed a
+  weather-biased value; QNH is now persisted (DataStore) and the worker derives
+  a calibrated altitude that matches the foreground app.
+- Wear: the tile ignored the phone calibration on live samples; Wear barometer
+  and calibration state are now persisted and restored across relaunches.
+- Wear → phone barometer backfill now works (the inbound listener was dead code),
+  so watch-captured history reaches the phone.
+- Home-screen widget: no-data state instead of authoritative `0 m / 0 kPa / 0,0`;
+  staleness cue for old data; reconfigure now preserves your toggle choices.
+- History DB no longer rebuilt with 4 full scans on every insert (dirty-flag +
+  single fetch); added a `recordDate` index (Room migration 1→2, non-destructive)
+  and a daily-rollover record.
+- Peak identity uses the full 128-bit coordinates (no 64-bit collisions);
+  Overpass coordinate quantisation uses round-half consistently.
+- Sensors pause when the app/Watch is backgrounded; `WearInboundListener`
+  throttle is now atomic; assorted AR/skyline fixes.
+
 ### Removed
 - Russian translation (`values-ru/`) and the empty `values-en-rGB/` — the app is
   English-only.
 - Unused `WAKE_LOCK` permission from the Wear manifest.
+- `ACCESS_BACKGROUND_LOCATION` — the app does no background location polling, so
+  the permission (and its privacy-policy entry) was dropped.
 
 ### Security
 - The Google Maps API key is no longer committed in `AndroidManifest.xml`; it is

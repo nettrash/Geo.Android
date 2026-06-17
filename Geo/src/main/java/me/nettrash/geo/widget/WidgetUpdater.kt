@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import me.nettrash.geo.connectivity.WearMessageBridge
 import me.nettrash.geo.data.model.InformationToken
+import me.nettrash.geo.data.snapshot.SharedSnapshotStore
 import me.nettrash.geo.location.LocationManager
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.util.AppLog
@@ -63,14 +64,23 @@ class WidgetUpdater @Inject constructor(
 
     private fun writeAndReload() {
         val loc = locationManager.location.value
+        // Carry the last known GPS altitude / coords forward when there's no
+        // live fix, instead of writing a 0 m / null-island sentinel. This token
+        // also feeds the storm-tendency de-trend (via SharedSnapshotStore), where
+        // a fabricated 0 m altitude — mixed with real climbing altitudes —
+        // injects a large artificial pressure step that can trip a false / mask a
+        // real storm alert. A genuine 0 m reading is preserved because a real fix
+        // populates `loc`; we only substitute when there's NO fix. Mirrors iOS
+        // GeoAppDelegate.pushDataToWidget.
+        val previous = if (loc == null) SharedSnapshotStore.readCurrent(context) else null
         val token = InformationToken(
             recordDate = System.currentTimeMillis(),
-            gpsAltitude = loc?.altitude ?: 0.0,
-            gpsSpeed = maxOf(loc?.speed?.toDouble() ?: 0.0, 0.0),
+            gpsAltitude = loc?.altitude ?: previous?.gpsAltitude ?: 0.0,
+            gpsSpeed = maxOf(loc?.speed?.toDouble() ?: previous?.gpsSpeed ?: 0.0, 0.0),
             barPreassure =barometerManager.pressure.value,
             barAltitude = barometerManager.height.value,
-            gpsLatitude = loc?.latitude ?: 0.0,
-            gpsLongitude = loc?.longitude ?: 0.0
+            gpsLatitude = loc?.latitude ?: previous?.gpsLatitude ?: 0.0,
+            gpsLongitude = loc?.longitude ?: previous?.gpsLongitude ?: 0.0
         )
         WidgetDataStore.write(
             context     = context,

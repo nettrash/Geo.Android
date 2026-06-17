@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -94,7 +95,6 @@ import me.nettrash.geo.ar.SkylineSample
 import me.nettrash.geo.ar.cameraHeadingDeg
 import me.nettrash.geo.ar.peakOnSilhouette
 import me.nettrash.geo.ar.weldedPeakLabels
-import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.ui.GeoViewModel
@@ -204,7 +204,6 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         if (!isARActive) return@LaunchedEffect
         while (true) {
             viewModel.searchForPeaks()
-            viewModel.loadARHistoryPoints()
             viewModel.locationManager.location.value?.let { loc ->
                 viewModel.skylineCalculator.computeIfNeeded(
                     observer = loc,
@@ -289,13 +288,12 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 )
             }
             !arAvailable -> ArUnavailableScreen()
+            // History points are intentionally not shown in the AR scene; they
+            // remain on the Map and Stat tabs.
             else -> ArScene(
                 controller = controller,
                 location = overlayLocation,
                 peaks = peaks,
-                // History points are intentionally not shown in the AR scene;
-                // they remain on the Map and Stat tabs.
-                historyPoints = emptyList(),
                 heading = heading,
                 isARActive = isARActive,
                 viewModel = viewModel
@@ -309,7 +307,6 @@ private fun ArScene(
     controller: ArSceneController,
     location: android.location.Location?,
     peaks: List<NearbyPeak>,
-    historyPoints: List<ARHistoryPoint>,
     heading: Float,
     isARActive: Boolean,
     viewModel: GeoViewModel
@@ -346,17 +343,11 @@ private fun ArScene(
         } else 0f
     }
     val trueHeading = (((heading + declination) % 360f) + 360f) % 360f
-    LaunchedEffect(trueHeading) { controller.setCompassTrueHeading(trueHeading) }
-
-    // Peaks welded to the skyline ridge — their AR markers are suppressed so a
-    // peak shows EITHER a ridge label OR a marker (matches the horizon overlay).
-    val weldedPeakIds = remember(peaks, skyline, location, barometerHeight) {
-        if (location == null || skyline.isEmpty()) {
-            emptySet()
-        } else {
-            peaks.filter { peakOnSilhouette(it, skyline, observerAlt) }.map { it.id }.toSet()
-        }
-    }
+    // setCompassTrueHeading is a trivial synchronous @Volatile write, so push it
+    // via SideEffect (runs after each successful composition) rather than a
+    // LaunchedEffect that would cancel + relaunch a coroutine on every ~50 Hz
+    // heading change just to assign one field.
+    SideEffect { controller.setCompassTrueHeading(trueHeading) }
 
     // Tap-to-identify + freeze-frame share.
     var selectedMarker by remember { mutableStateOf<ArMarkerSelection?>(null) }
@@ -379,6 +370,21 @@ private fun ArScene(
     // projected point, so the hit-test offsets by half the measured size to
     // compare against the visual CENTRE (matching iOS's center anchor).
     val markerSizes = remember { mutableStateMapOf<UUID, IntSize>() }
+
+    // Peaks welded to the skyline ridge — their AR markers are suppressed so a
+    // silhouette peak shows EITHER a ridge pill OR nothing, never a flat AR
+    // marker. Camera-INDEPENDENT (peakOnSilhouette), so it's a stable superset of
+    // what the horizon overlay actually welds: every drawn pill is suppressed
+    // here, and a peak dropped from the welded labels (de-collision / heading
+    // window / cap) is hidden rather than falling back to a flat, unrotated,
+    // leaderless marker that wouldn't match the welded pills.
+    val weldedPeakIds = remember(peaks, skyline, location, barometerHeight) {
+        if (location == null || skyline.isEmpty()) {
+            emptySet()
+        } else {
+            peaks.filter { peakOnSilhouette(it, skyline, observerAlt) }.map { it.id }.toSet()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { /* viewport handled via AndroidView */ }) {
         AndroidView(
@@ -460,10 +466,12 @@ private fun ArScene(
                 )
             }
 
-            // Peak / history markers — only render when matrices are
-            // available AND the user has a location, otherwise fall back
-            // to the simpler bearing-window overlay used previously so
-            // we still show *something* before the AR session warms up.
+            // Peak markers — only once the camera is actually tracking and the
+            // matrices are available, so a marker can't be drawn at the wrong
+            // place before the AR session warms up. Matches iOS, whose overlays
+            // simply render nothing until `isTracking` (camera feed + crosshair
+            // only for the first ~second) rather than showing an approximate
+            // pre-tracking placement.
             if (location != null && isTracking && viewportSize != null) {
                 // Suppress near markers (< NEARBY_THRESHOLD_M) until the
                 // scene is ready, so they don't flash in before they can
@@ -478,18 +486,7 @@ private fun ArScene(
                             it.id in weldedPeakIds ||   // labelled on the ridge instead
                             (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
                     },
-                    historyPoints = historyPoints.filterNot {
-                        it.id in occludedIds ||
-                            (!isSceneReady && it.distance < NEARBY_THRESHOLD_M)
-                    },
                     onMarkerSized = { id, size -> markerSizes[id] = size }
-                )
-            } else {
-                BearingWindowOverlay(
-                    peaks = peaks,
-                    historyPoints = historyPoints,
-                    heading = heading,
-                    userAltitude = location?.altitude ?: 0.0
                 )
             }
         }
@@ -504,12 +501,12 @@ private fun ArScene(
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(
-                        peaks, historyPoints, occludedIds, isSceneReady, viewportSize,
+                        peaks, occludedIds, isSceneReady, viewportSize,
                         skyline, weldedPeakIds, location, observerAlt, leaderPx, minSpacingPx
                     ) {
                         detectTapGestures { tap ->
                             nearestMarker(
-                                tap, controller, location, peaks, historyPoints,
+                                tap, controller, location, peaks,
                                 occludedIds, isSceneReady, hitRadiusPx, markerSizes,
                                 skyline, weldedPeakIds, observerAlt, leaderPx, minSpacingPx
                             )?.let { selectedMarker = it }
@@ -651,7 +648,6 @@ private fun ArScene(
                 occlusion = viewModel.occlusionManager,
                 skyline = viewModel.skylineCalculator,
                 peakCount = peaks.size,
-                historyCount = historyPoints.size,
                 locationAccuracy = location?.accuracy,
                 onDismiss = { showDiagnostics = false }
             )
@@ -673,8 +669,6 @@ private fun ArScene(
                                 // GraphicsLayer readback must happen on the main thread.
                                 val overlay = overlayLayer.toImageBitmap().asAndroidBitmap()
                                 val markers = peaks.count {
-                                    it.id !in occludedIds && (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
-                                } + historyPoints.count {
                                     it.id !in occludedIds && (isSceneReady || it.distance >= NEARBY_THRESHOLD_M)
                                 }
                                 PanoramaCapture.captureAndShare(context, view, overlay, markers)
@@ -716,17 +710,15 @@ private fun ArScene(
 /**
  * Screen-space nearest-marker hit-test for tap-to-identify. Recomputes each
  * visible marker's projected position via [ArProjection] (the same source the
- * overlay uses) and returns the closest within [hitRadiusPx]. Peaks (drawn on
- * top) win near-ties — a history point must be strictly closer to be chosen.
- * Applies the SAME occluded / near-warm-up filter as [ProjectedOverlay] so an
- * off-screen or hidden marker can never be selected.
+ * overlay uses) and returns the closest within [hitRadiusPx]. Applies the SAME
+ * occluded / near-warm-up filter as [ProjectedOverlay] so an off-screen or
+ * hidden marker can never be selected.
  */
 private fun nearestMarker(
     tap: Offset,
     controller: ArSceneController,
     userLocation: android.location.Location,
     peaks: List<NearbyPeak>,
-    historyPoints: List<ARHistoryPoint>,
     occludedIds: Set<UUID>,
     isSceneReady: Boolean,
     hitRadiusPx: Float,
@@ -782,14 +774,6 @@ private fun nearestMarker(
         val d = centerDist(peak.id, off)
         if (d <= bestDist) { bestDist = d; best = ArMarkerSelection.Peak(peak) }
     }
-    for (point in historyPoints) {
-        if (!visible(point.id, point.distance)) continue
-        val off = ArProjection.projectGps(
-            controller, userLocation, point.latitude, point.longitude, point.gpsAltitude
-        ) ?: continue
-        val d = centerDist(point.id, off)
-        if (d < bestDist) { bestDist = d; best = ArMarkerSelection.History(point) }
-    }
     return best
 }
 
@@ -802,12 +786,10 @@ private fun ProjectedOverlay(
     controller: ArSceneController,
     userLocation: android.location.Location,
     peaks: List<NearbyPeak>,
-    historyPoints: List<ARHistoryPoint>,
     onMarkerSized: (UUID, IntSize) -> Unit = { _, _ -> }
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        // History points first so peaks render on top. `key(id)`
-        // makes each marker's animation state survive list
+        // `key(id)` makes each marker's animation state survive list
         // reorderings (the merge step in PeakFinder can shuffle
         // order without changing identities).
         //
@@ -817,25 +799,6 @@ private fun ProjectedOverlay(
         // `forEach` lambda generates a `$$$$$NON_LOCAL_RETURN$$$$$`
         // helper class that R8 can't represent in dex format.
         // A plain `if (off != null)` does the same thing and dexes.
-        historyPoints.forEach { point ->
-            key(point.id) {
-                val off = ArProjection.projectGps(
-                    controller = controller,
-                    userLocation = userLocation,
-                    targetLat = point.latitude,
-                    targetLon = point.longitude,
-                    targetAlt = point.gpsAltitude
-                )
-                if (off != null) {
-                    val opacity = (1.0 - (point.distance / 50_000.0) * 0.5)
-                        .coerceIn(0.5, 1.0).toFloat() * 0.85f
-                    AnimatedMarker(target = off, onMeasured = { onMarkerSized(point.id, it) }) {
-                        HistoryMarker(point = point, opacity = opacity)
-                    }
-                }
-            }
-        }
-
         peaks.forEach { peak ->
             key(peak.id) {
                 val off = ArProjection.projectGps(
@@ -889,51 +852,6 @@ private fun AnimatedMarker(
     }
 }
 
-/**
- * Fallback bearing-window overlay used while the AR session warms
- * up. Inferior to ProjectedOverlay (no altitude awareness, no
- * camera matrices) but still gives the user *something* to look at
- * in the first second after granting the camera permission.
- *
- * Uses `Modifier.absoluteOffset` rather than `Modifier.padding` to
- * place markers. The bearing-window formulas clamp to [0.1, 0.9] so
- * the values never go negative *today*, but `padding(...)` throws
- * `IllegalArgumentException: Padding must be non-negative` on the
- * slightest regression in those formulas. `absoluteOffset` accepts
- * any sign and matches the convention now used in ProjectedOverlay.
- */
-@Composable
-private fun BearingWindowOverlay(
-    peaks: List<NearbyPeak>,
-    historyPoints: List<ARHistoryPoint>,
-    heading: Float,
-    userAltitude: Double
-) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        peaks.forEach { peak ->
-            val rel = ((peak.bearing - heading + 360) % 360).toFloat()
-            if (rel !in 0f..60f && rel !in 300f..360f) return@forEach
-            val nx = if (rel <= 180) 0.5f + (rel / 120f) else 0.5f - ((360f - rel) / 120f)
-            val ny = (0.5f - ((peak.altitude - userAltitude) / 5000.0).toFloat()).coerceIn(0.1f, 0.9f)
-            val opacity = (1.0 - (peak.distance / 50000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
-            val scale = (1.0 - (peak.distance / 50000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
-            Box(modifier = Modifier.absoluteOffset(x = (nx * 300).dp, y = (ny * 500).dp)) {
-                PeakMarker(peak = peak, opacity = opacity, scale = scale)
-            }
-        }
-        historyPoints.forEach { point ->
-            val rel = ((point.bearing - heading + 360) % 360).toFloat()
-            if (rel !in 0f..60f && rel !in 300f..360f) return@forEach
-            val nx = if (rel <= 180) 0.5f + (rel / 120f) else 0.5f - ((360f - rel) / 120f)
-            val ny = (0.5f - ((point.gpsAltitude - userAltitude) / 1000.0).toFloat()).coerceIn(0.1f, 0.9f)
-            val opacity = (1.0 - (point.distance / 50000.0) * 0.5).coerceIn(0.5, 1.0).toFloat() * 0.85f
-            Box(modifier = Modifier.absoluteOffset(x = (nx * 300).dp, y = (ny * 500).dp)) {
-                HistoryMarker(point = point, opacity = opacity)
-            }
-        }
-    }
-}
-
 @Composable
 private fun PeakMarker(peak: NearbyPeak, opacity: Float = 1f, scale: Float = 1f) {
     Column(
@@ -962,39 +880,6 @@ private fun PeakMarker(peak: NearbyPeak, opacity: Float = 1f, scale: Float = 1f)
             "▼",
             color = Color(0xFFFF9800).copy(alpha = opacity),
             fontSize = (8 * scale).sp
-        )
-    }
-}
-
-@Composable
-private fun HistoryMarker(point: ARHistoryPoint, opacity: Float = 1f) {
-    val dateFormatter = remember { java.text.SimpleDateFormat("MMM d HH:mm", Locale.getDefault()) }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .background(
-                Color.Black.copy(alpha = 0.7f * opacity),
-                RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = 6.dp, vertical = 3.dp)
-    ) {
-        Text(
-            dateFormatter.format(point.date),
-            color = Color.Cyan.copy(alpha = opacity),
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace
-        )
-        Text(
-            "GPS: ${point.gpsAltitude.toInt()}m  Bar: ${point.barometerAltitude.toInt()}m",
-            color = Color.White.copy(alpha = opacity),
-            fontSize = 9.sp,
-            fontFamily = FontFamily.Monospace
-        )
-        Text(
-            "${String.format(Locale.US, "%.0f", point.distance)} m",
-            color = Color.Cyan.copy(alpha = opacity),
-            fontSize = 9.sp,
-            fontFamily = FontFamily.Monospace
         )
     }
 }

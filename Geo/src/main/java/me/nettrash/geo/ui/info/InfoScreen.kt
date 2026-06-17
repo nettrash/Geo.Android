@@ -341,6 +341,9 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
         OfflineExpeditionCard(viewModel = viewModel)
 
+        Spacer(modifier = Modifier.height(8.dp))
+        DataSourcesCredit()
+
         Spacer(modifier = Modifier.height(16.dp))
         } // Column
 
@@ -457,6 +460,24 @@ fun InfoCard(watermark: String, content: @Composable () -> Unit) {
         Column {
             content()
         }
+    }
+}
+
+/** Data-source attribution footer for the Info tab. Credits the public data
+ *  providers the app depends on (fair-use / attribution courtesy for Open-Meteo
+ *  and OpenStreetMap, plus Google's frameworks). */
+@Composable
+private fun DataSourcesCredit() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Data sources", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text("Peaks © OpenStreetMap contributors (Overpass)", color = Color.Gray, fontSize = 11.sp)
+        Text("Elevation & weather by Open-Meteo", color = Color.Gray, fontSize = 11.sp)
+        Text("Maps by Google · AR by ARCore", color = Color.Gray, fontSize = 11.sp)
     }
 }
 

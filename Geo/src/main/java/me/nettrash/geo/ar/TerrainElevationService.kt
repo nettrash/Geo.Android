@@ -5,25 +5,27 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.RetryInterceptor
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Lightweight wrapper around the public Open-Elevation REST API.
+ * Lightweight wrapper around the public Open-Meteo elevation REST API.
  * Direct port of iOS `Core/TerrainElevationService.swift`.
  *
  *  * **Batched lookups** — up to 100 points per HTTP POST.
@@ -68,7 +70,9 @@ class TerrainElevationService @Inject constructor(
      *  like [cache]. Consulted on every cache miss and NEVER LRU-evicted,
      *  so a prefetched area's terrain skyline keeps resolving from cache
      *  with no signal. Replaced wholesale from the saved packs by
-     *  `OfflinePackRepository` at launch and whenever a pack changes. */
+     *  `OfflinePackRepository` at launch and whenever a pack changes. Total
+     *  memory is bounded because each pack caps its cell count at
+     *  [SkylineCalculator.OFFLINE_MAX_DEM_CELLS] (≈ cap × number of packs). */
     @Volatile private var pinned: Map<GridKey, Double> = emptyMap()
 
     /** Durable backing for [cache] so terrain elevations survive process
@@ -94,10 +98,18 @@ class TerrainElevationService @Inject constructor(
     private val batchSize = 100
     private val timeoutSeconds = 8L
 
+    /** How many elevation batches to fetch concurrently. A cold skyline pass is
+     *  ~36 batches; running a few lanes in parallel turns a ~7–15 s serial fetch
+     *  into ~1–2 s while staying well within Open-Meteo's fair-use limits. */
+    private val maxConcurrentBatches = 6
+
+    // minIntervalMs = 0 disables the per-request spacing (politeness now comes
+    // from the bounded lane count above, so batches can actually run in
+    // parallel); the retry-on-429/5xx behaviour is retained.
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
         .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
-        .addInterceptor(RetryInterceptor(minIntervalMs = 200))
+        .addInterceptor(RetryInterceptor(minIntervalMs = 0))
         .build()
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -128,25 +140,33 @@ class TerrainElevationService @Inject constructor(
         }
         if (pending.isEmpty()) return@withContext results.toList()
 
-        // Slice into HTTP batches. Each batch is one POST.
+        // Slice into ≤batchSize HTTP batches and fetch them CONCURRENTLY, bounded
+        // to maxConcurrentBatches lanes by the semaphore. A cold skyline is ~36
+        // batches; serial they took ~7–15 s, in parallel ~1–2 s. Each batch
+        // stitches its own results into the cache under cacheLock as it returns.
         var resolvedAny = false
-        pending.chunked(batchSize).forEach { chunk ->
-            val coords = chunk.map { it.second.toCoord() }
-            val response = fetchBatch(coords)
-            cacheLock.withLock {
-                for ((row, elevation) in chunk.zip(response)) {
-                    // Reject implausible values: below the lowest dry land
-                    // on Earth (Dead Sea shore, ~-430 m) is impossible, and
-                    // an exact 0.0 is Open-Elevation's "unresolved" / ocean
-                    // sentinel — accepting it would plant a peak at sea
-                    // level. Treat both as null so the caller falls back.
-                    if (elevation != null && elevation > -430.0 && elevation != 0.0) {
-                        cache[row.second] = elevation
-                        results[row.first] = elevation
-                        resolvedAny = true
+        val gate = Semaphore(maxConcurrentBatches)
+        coroutineScope {
+            pending.chunked(batchSize).map { chunk ->
+                async {
+                    val response = gate.withPermit { fetchBatch(chunk.map { it.second.toCoord() }) }
+                    cacheLock.withLock {
+                        for ((row, elevation) in chunk.zip(response)) {
+                            // Reject implausible values: below the lowest dry land
+                            // on Earth (Dead Sea shore, ~-430 m) is impossible, and
+                            // an exact 0.0 is the ocean / outside-DEM value —
+                            // accepting it would plant a peak at sea level. Treat
+                            // both as null so the caller falls back to the
+                            // geometric horizon.
+                            if (elevation != null && elevation > -430.0 && elevation != 0.0) {
+                                cache[row.second] = elevation
+                                results[row.first] = elevation
+                                resolvedAny = true
+                            }
+                        }
                     }
                 }
-            }
+            }.awaitAll()
         }
         // Write through so the freshly resolved (static) elevations
         // survive a cold start / offline revisit. Off the request path.
@@ -182,19 +202,18 @@ class TerrainElevationService @Inject constructor(
     private fun fetchBatch(coords: List<Coord>): List<Double?> {
         if (coords.isEmpty()) return emptyList()
 
-        val url = "https://api.open-elevation.com/api/v1/lookup"
-        val payload = OpenElevationRequest(
-            coords.map { OpenElevationRequest.Location(it.lat, it.lon) }
-        )
-        val body = try {
-            json.encodeToString(payload).toRequestBody(JSON_MEDIA)
-        } catch (t: Throwable) {
-            AppLog.ar.warn("Elevation request encode failed", t)
-            return List(coords.size) { null }
-        }
+        // Open-Meteo elevation API: GET with comma-separated lat/lon lists, up to
+        // 100 points per request (matches batchSize). Reliable + free + no key,
+        // and already used for weather/QNH. Replaces the public Open-Elevation
+        // endpoint, which frequently 504s / times out and left the AR terrain
+        // skyline (and its welded peak labels) empty. Coords are pre-quantised
+        // to the privacy grid before this call.
+        val lats = coords.joinToString(",") { it.lat.toString() }
+        val lons = coords.joinToString(",") { it.lon.toString() }
+        val url = "https://api.open-meteo.com/v1/elevation?latitude=$lats&longitude=$lons"
         val request = Request.Builder()
             .url(url)
-            .post(body)
+            .get()
             .header("Accept", "application/json")
             .header("User-Agent", USER_AGENT)
             .build()
@@ -205,8 +224,8 @@ class TerrainElevationService @Inject constructor(
                     return List(coords.size) { null }
                 }
                 val text = resp.body.string()
-                val decoded = json.decodeFromString<OpenElevationResponse>(text)
-                val out: List<Double?> = decoded.results.map { it.elevation }
+                val decoded = json.decodeFromString<OpenMeteoElevationResponse>(text)
+                val out: List<Double?> = decoded.elevation
                 if (out.size < coords.size) {
                     out + List<Double?>(coords.size - out.size) { null }
                 } else {
@@ -230,17 +249,15 @@ class TerrainElevationService @Inject constructor(
     private data class Coord(val lat: Double, val lon: Double)
 
     companion object {
-        private val JSON_MEDIA = "application/json".toMediaType()
-
         /** App-identifying User-Agent for the public third-party APIs
-         *  (Open-Elevation, Overpass). Matches iOS so operators see one
+         *  (Open-Meteo, Overpass). Matches iOS so operators see one
          *  consistent client across both ports. */
         const val USER_AGENT = "me.nettrash.Geo/1.0 (+https://nettrash.me)"
 
         /**
          * Round a coordinate component to the shared ~110 m privacy grid
          * (3 decimals, round-half). Reused by [TerrainElevationService]
-         * (cache + Open-Elevation request) and [me.nettrash.geo.util.PeakFinder]
+         * (cache + Open-Meteo request) and [me.nettrash.geo.util.PeakFinder]
          * (Overpass request) so every outbound coordinate uses identical
          * grid math, matching iOS.
          */
@@ -255,14 +272,7 @@ class TerrainElevationService @Inject constructor(
 
 // ─── Wire format ───────────────────────────────────────────────────
 
+/** Open-Meteo elevation response: `{ "elevation": [e0, e1, …] }`, one entry per
+ *  requested coordinate, in order. */
 @Serializable
-private data class OpenElevationRequest(val locations: List<Location>) {
-    @Serializable
-    data class Location(val latitude: Double, val longitude: Double)
-}
-
-@Serializable
-private data class OpenElevationResponse(val results: List<Row> = emptyList()) {
-    @Serializable
-    data class Row(val latitude: Double, val longitude: Double, val elevation: Double)
-}
+private data class OpenMeteoElevationResponse(val elevation: List<Double> = emptyList())

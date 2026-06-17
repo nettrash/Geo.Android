@@ -5,7 +5,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -121,6 +120,15 @@ class ArOcclusionManager @Inject constructor() {
     fun sessionStarted() {
         warmupJob?.cancel()
         _isSceneReady.value = false
+        // Clear session-scoped state so re-entering the AR tab starts from a
+        // clean slate. This is a @Singleton, so `_occludedIds`, the confidence
+        // counters and the outdoor flag otherwise survive a tab change and the
+        // previous session's hidden markers linger as "ghosts" until the 500 ms
+        // loop re-evaluates. iOS avoids this with a per-view @StateObject that's
+        // recreated fresh each presentation; resetting here matches that.
+        _occludedIds.value = emptySet()
+        confidence.clear()
+        _isOutdoor.value = false
         warmupJob = scope.launch {
             delay(sceneWarmupMs)
             if (!_isSceneReady.value) {
@@ -145,6 +153,13 @@ class ArOcclusionManager @Inject constructor() {
         val depthSnapshot = controller.depthSnapshot.value
         val viewport = controller.viewportSize.value
         val outdoor = _isOutdoor.value
+        // Capture the projection matrices ONCE here so the off-main projection
+        // in the depth branch below uses a single consistent frame — re-reading
+        // controller.projectToScreen()'s StateFlows from the worker could
+        // otherwise mix matrices from different frames (a torn read).
+        val viewMat = controller.viewMatrix.value
+        val projMat = controller.projectionMatrix.value
+        val yawDeg = controller.frameYawOffsetDeg
 
         // Scene-ready signal: as soon as ARCore gives us a vertical
         // plane or a depth frame, the scene can occlude near markers,
@@ -178,13 +193,21 @@ class ArOcclusionManager @Inject constructor() {
                         continue
                     }
 
-                    // 2. Depth-image occlusion — projection + lookup.
-                    if (depthSnapshot != null && viewport != null) {
-                        val screen = controller.projectToScreen(target.worldPosition) ?: continue
+                    // 2. Depth-image occlusion — projection + lookup, all using
+                    //    the single captured frame snapshot so the sampled screen
+                    //    pixel and the marker depth describe the same geometry.
+                    if (depthSnapshot != null && viewport != null && viewMat != null && projMat != null) {
+                        val screen = controller.projectToScreen(
+                            target.worldPosition, viewMat, projMat, viewport, cameraPos, yawDeg
+                        ) ?: continue
+                        // Camera-space depth from the SAME rotated point + view matrix.
+                        val adj = controller.trueNorthAdjusted(target.worldPosition, cameraPos, yawDeg)
+                        val cameraSpaceDepth =
+                            -(viewMat[2] * adj[0] + viewMat[6] * adj[1] + viewMat[10] * adj[2] + viewMat[14])
                         val occ = isOccludedByDepth(
                             screen = screen,
                             viewport = viewport,
-                            cameraSpaceDepth = projectCameraSpaceDepth(controller, target.worldPosition),
+                            cameraSpaceDepth = cameraSpaceDepth,
                             depth = depthSnapshot
                         )
                         if (occ) occluded.add(target.id)
@@ -215,14 +238,6 @@ class ArOcclusionManager @Inject constructor() {
                 _occludedIds.value = stable
             }
         }
-    }
-
-    /** Stop and discard any in-flight work — call when AR session
-     *  tears down so the scope doesn't outlive the host. */
-    fun shutdown() {
-        currentJob?.cancel()
-        warmupJob?.cancel()
-        scope.cancel()
     }
 
     // ── Plane ray-intersection (pure math, unit-testable) ─────────
@@ -334,18 +349,5 @@ class ArOcclusionManager @Inject constructor() {
         // Marker is "behind" the surface when the surface is
         // meaningfully closer.
         return sceneDepthM > 0.1f && sceneDepthM < cameraSpaceDepth - 0.3f
-    }
-
-    private fun projectCameraSpaceDepth(
-        controller: ArSceneController,
-        world: FloatArray
-    ): Float {
-        // ArSceneController doesn't expose this directly; compute it
-        // here from the view matrix.
-        val view = controller.viewMatrix.value ?: return 0f
-        // view * (world, 1) → camera-space; depth is −Z of the
-        // resulting vector (ARCore camera looks down −Z).
-        val z = view[2] * world[0] + view[6] * world[1] + view[10] * world[2] + view[14]
-        return -z
     }
 }

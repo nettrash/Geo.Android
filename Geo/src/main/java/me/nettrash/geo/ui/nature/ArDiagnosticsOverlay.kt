@@ -46,7 +46,6 @@ fun ArDiagnosticsOverlay(
     occlusion: ArOcclusionManager,
     skyline: SkylineCalculator,
     peakCount: Int,
-    historyCount: Int,
     locationAccuracy: Float?,
     onDismiss: () -> Unit
 ) {
@@ -128,7 +127,6 @@ fun ArDiagnosticsOverlay(
             Spacer(Modifier.height(6.dp))
             Section("scene")
             Row2("peaks", peakCount.toString())
-            Row2("history points", historyCount.toString())
             Row2("gps accuracy",
                 locationAccuracy?.let { String.format(Locale.US, "%.1f m", it) } ?: "—")
 

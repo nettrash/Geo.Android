@@ -353,10 +353,13 @@ const val PEAK_LABEL_ROTATION_DEG = -75f
  * [PEAK_LABEL_LEADER_DP]). Kept in dp — not raw px — so de-collision stays the
  * same PHYSICAL tightness across screen densities; a px literal would pack pills
  * too tight on xxhdpi and too loose on mdpi since the pills themselves are
- * dp-sized. ~20dp ≈ the old 54px on a typical ~2.75× device. iOS uses 54
- * density-independent points directly.
+ * dp-sized. iOS uses `minSpacing = 54` density-independent POINTS; an Android dp
+ * is the same physical unit as an iOS point (~1/160 inch), so the faithful port
+ * is 54dp — matching iOS's de-collision tightness exactly. (The earlier 20dp
+ * came from mistaking iOS's 54 *points* for 54 *px*, which packed labels ~2.7×
+ * tighter than iOS on the same ridge.)
  */
-const val PEAK_LABEL_MIN_SPACING_DP = 20
+const val PEAK_LABEL_MIN_SPACING_DP = 54
 
 /**
  * Camera heading (degrees, 0 = N) from the AR view matrix — the same derivation
@@ -472,19 +475,35 @@ private fun resolveBearing(
     return interpolateSkyline(normalised, samples)
 }
 
+/** Binary search over a bearing-sorted skyline: first index whose bearing is
+ *  strictly greater than [query], or `samples.size` if none. O(log n) vs the
+ *  old O(n) `indexOfFirst`; the per-frame horizon layout does hundreds of these
+ *  lookups (every rendered bearing + every peak). [samples] MUST be sorted
+ *  ascending by bearing. */
+private fun firstBearingAbove(query: Double, samples: List<SkylineSample>): Int {
+    var lo = 0
+    var hi = samples.size
+    while (lo < hi) {
+        val mid = (lo + hi) ushr 1
+        if (samples[mid].bearing > query) hi = mid else lo = mid + 1
+    }
+    return lo
+}
+
 private fun interpolateSkyline(
     bearing: Double,
     samples: List<SkylineSample>
 ): Pair<Double, Double> {
     if (samples.isEmpty()) return 0.0 to 0.0
     if (samples.size == 1) return samples[0].distance to samples[0].altitude
-    var hiIdx = samples.indexOfFirst { it.bearing > bearing }
+    // First index whose bearing > query (O(log n) binary search), or size if
+    // none. Both "before the first sample" and "after the last sample" wrap
+    // around to interpolate between the last and first samples.
+    var hiIdx = firstBearingAbove(bearing, samples)
     val loIdx: Int
-    if (hiIdx == -1) {
+    if (hiIdx == samples.size || hiIdx == 0) {
         loIdx = samples.size - 1
         hiIdx = 0
-    } else if (hiIdx == 0) {
-        loIdx = samples.size - 1
     } else {
         loIdx = hiIdx - 1
     }

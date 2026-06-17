@@ -61,6 +61,13 @@ class DeviceMotionManager @Inject constructor(
 
     private var isStarted = false
 
+    /** The sampling period the listener is currently registered at, or null when
+     *  stopped. Lets [start] UPGRADE the rate: the Info compass starts the shared
+     *  singleton at SENSOR_DELAY_UI, but the AR view wants the faster
+     *  SENSOR_DELAY_GAME — without re-registering, the first caller's rate would
+     *  stick and AR tracking would run at the slower rate. */
+    private var currentPeriodUs: Int? = null
+
     /**
      * Begin delivering heading/pitch/roll.
      *
@@ -72,11 +79,19 @@ class DeviceMotionManager @Inject constructor(
      * opts into the faster rate explicitly.
      */
     fun start(samplingPeriodUs: Int = SensorManager.SENSOR_DELAY_UI) {
-        if (isStarted) return
+        // Already running at this rate or faster — nothing to do. SENSOR_DELAY_*
+        // values (and explicit microsecond periods) are both "smaller = faster",
+        // so a requested period >= the current one is no upgrade.
+        val current = currentPeriodUs
+        if (isStarted && current != null && samplingPeriodUs >= current) return
         rotationSensor?.let {
+            // Re-register to apply a faster rate requested while already running
+            // (registerListener replaces the existing registration).
+            if (isStarted) sensorManager.unregisterListener(this, it)
             // Track the actual registration result: if it fails, leave
             // isStarted false so a later start() can retry.
             isStarted = sensorManager.registerListener(this, it, samplingPeriodUs)
+            currentPeriodUs = if (isStarted) samplingPeriodUs else null
         }
     }
 
@@ -84,6 +99,7 @@ class DeviceMotionManager @Inject constructor(
         if (!isStarted) return
         sensorManager.unregisterListener(this)
         isStarted = false
+        currentPeriodUs = null
     }
 
     override fun onSensorChanged(event: SensorEvent?) {

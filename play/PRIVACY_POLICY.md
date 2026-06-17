@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** 28 April 2026
+**Effective date:** 17 June 2026
 **Applies to:** Geo — the Android app published by nettrash on Google Play (`me.nettrash.geo`). This policy is versioned alongside the app's source code; the most recent commit on `main` is authoritative.
 
 ## TL;DR
@@ -13,9 +13,7 @@ Geo doesn't collect any personal information about you, doesn't create accounts,
 
 1. Show your current position on the in-app map.
 2. Compute distances and bearings to known peaks for the AR view and the "Nearby" list.
-3. Build the Overpass API query described below.
-
-**Background location** (`ACCESS_BACKGROUND_LOCATION`) — declared so a future home-screen widget can refresh while the app is closed. **At present the app does not use it for any active background polling.** If a future release adds a background location-driven feature, this policy will be updated in the same release and the *Effective date* will move.
+3. Build the Overpass / elevation queries described below.
 
 **Camera** (`CAMERA`) — used by the AR view to overlay peak names on the camera feed. Frames are processed entirely on-device by ARCore; nothing is recorded or transmitted.
 
@@ -28,6 +26,8 @@ Geo doesn't collect any personal information about you, doesn't create accounts,
 **OpenStreetMap Overpass API** (`https://overpass-api.de/api/interpreter`). When you open the Nature tab, the app sends an HTTPS request containing your approximate latitude/longitude and a search radius (typically 25–50 km) to fetch the list of nodes tagged `natural=peak` near you. The request body contains *only* those coordinates and the radius — no device identifiers, no Advertising ID, no account information. The Overpass API is a free, public service hosted by OpenStreetMap volunteers and governed by the [OpenStreetMap Foundation Privacy Policy](https://osmfoundation.org/wiki/Privacy_Policy).
 
 **Google Maps Android SDK.** The Map tab renders map tiles and your-location pin via the Maps SDK for Android. Google is the data controller for those requests; the data flow and Google's use of it are governed by the [Google Maps / Google Earth Additional Terms of Service](https://maps.google.com/help/terms_maps/) and the [Google Privacy Policy](https://policies.google.com/privacy). The Maps SDK is configured with a publishable Maps API key restricted to this app's package + signing certificate.
+
+**Open-Meteo API** (`https://api.open-meteo.com`). The Nature/AR view fetches terrain elevation to draw the horizon skyline, and the barometer card fetches the local reference pressure (QNH) to calibrate altitude. Each request sends only approximate latitude/longitude (rounded to a ~110 m grid) — no device identifiers, no Advertising ID, no account information. Open-Meteo is a free, open API; its handling is governed by the [Open-Meteo Terms](https://open-meteo.com/en/terms).
 
 That's the entire list. There are no other servers contacted. There is no telemetry, no crash reporter, no advertising network, no attribution provider, no remote analytics.
 
@@ -55,6 +55,7 @@ Listing them explicitly because the negatives matter as much as the positives:
 |---|---|---|
 | Google Maps SDK for Android | Coarse position + viewport requests for tile rendering | Google's |
 | OpenStreetMap Overpass API | Approximate coordinates + search radius | OpenStreetMap Foundation's |
+| Open-Meteo API | Approximate coordinates (~110 m grid) for terrain elevation + reference pressure | Open-Meteo's |
 | Google ARCore | Camera frames + IMU data, **on-device only** | Google's |
 
 Specifically NOT used: Google Advertising ID, Google Analytics, Firebase, Crashlytics, AdMob, AppLovin, any social-media SDK, any attribution / install-tracking SDK.

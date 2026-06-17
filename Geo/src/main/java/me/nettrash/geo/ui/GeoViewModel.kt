@@ -18,7 +18,6 @@ import kotlinx.coroutines.launch
 import me.nettrash.geo.data.db.HistoryItem
 import me.nettrash.geo.data.db.SummitLog
 import me.nettrash.geo.data.db.Trip
-import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.DataItem
 import me.nettrash.geo.data.model.DataPoint
 import me.nettrash.geo.data.model.MountainData
@@ -45,7 +44,6 @@ import me.nettrash.geo.util.PeakFinder
 import me.nettrash.geo.util.QnhRepository
 import me.nettrash.geo.util.TripRecordingStore
 import me.nettrash.geo.widget.WidgetUpdater
-import java.util.Date
 import javax.inject.Inject
 
 @HiltViewModel
@@ -147,10 +145,6 @@ class GeoViewModel @Inject constructor(
     // Peaks for AR
     private val _peaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
     val peaks: StateFlow<List<NearbyPeak>> = _peaks.asStateFlow()
-
-    // AR History points
-    private val _arHistoryPoints = MutableStateFlow<List<ARHistoryPoint>>(emptyList())
-    val arHistoryPoints: StateFlow<List<ARHistoryPoint>> = _arHistoryPoints.asStateFlow()
 
     private val trackingMutableData = mutableListOf<DataPoint>()
 
@@ -568,46 +562,6 @@ class GeoViewModel @Inject constructor(
     }
 
     fun renameOfflinePack(pack: OfflinePack, newName: String) = offlinePackRepository.rename(pack, newName)
-
-    fun loadARHistoryPoints() {
-        val userLoc = locationManager.location.value ?: return
-        viewModelScope.launch {
-            // Time-filter first, area-filter second. Mirrors the
-            // iOS port's correction: we want "the user's 10 most
-            // recent points, of which we render the nearby ones",
-            // NOT "any of the last 200 points that happen to be
-            // within range" — the latter put 6-month-old markers
-            // back into the AR scene when the user wandered close
-            // to an old position.
-            val items = historyRepository.getRecentItems(10)
-            val maxDistance = 1000.0
-
-            _arHistoryPoints.value = items.mapNotNull { item ->
-                val distance = GeoCalculations.distanceBetween(
-                    userLoc.latitude, userLoc.longitude,
-                    item.gpsLatitude, item.gpsLongitude
-                )
-                if (distance > maxDistance || distance < 1) return@mapNotNull null
-
-                val bearing = GeoCalculations.bearing(
-                    userLoc.latitude, userLoc.longitude,
-                    item.gpsLatitude, item.gpsLongitude
-                )
-
-                ARHistoryPoint.create(
-                    date = Date(item.recordDate),
-                    latitude = item.gpsLatitude,
-                    longitude = item.gpsLongitude,
-                    gpsAltitude = item.gpsAltitude,
-                    barometerAltitude = item.barometerAltitude,
-                    pressure = item.barometerPressure,
-                    speed = item.gpsVelocity,
-                    distance = distance,
-                    bearing = bearing
-                )
-            }
-        }
-    }
 
     private fun updateWidget() {
         // Throttled push — see WidgetUpdater.pushThrottled for the

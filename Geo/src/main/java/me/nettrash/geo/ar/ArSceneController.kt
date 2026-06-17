@@ -8,6 +8,7 @@ import com.google.ar.core.TrackingState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -25,11 +26,13 @@ import kotlin.math.sin
  */
 class ArSceneController {
 
-    /** Latest world→view matrix (4×4, row-major) or null until first frame. */
+    /** Latest world→view matrix (4×4, column-major — ARCore's getViewMatrix
+     *  output) or null until first frame. */
     private val _viewMatrix = MutableStateFlow<FloatArray?>(null)
     val viewMatrix: StateFlow<FloatArray?> = _viewMatrix.asStateFlow()
 
-    /** Latest projection matrix (4×4, row-major). */
+    /** Latest projection matrix (4×4, column-major — ARCore's
+     *  getProjectionMatrix output). */
     private val _projectionMatrix = MutableStateFlow<FloatArray?>(null)
     val projectionMatrix: StateFlow<FloatArray?> = _projectionMatrix.asStateFlow()
 
@@ -63,6 +66,29 @@ class ArSceneController {
     @Volatile
     private var compassTrueHeadingDeg: Float = Float.NaN
     private var yawOffsetInitialized = false
+
+    /** Frames since the offset was first set. Used to converge FAST initially
+     *  (lock onto true north within ~1 s of magnetometer averaging) and then
+     *  HOLD, so the cardinal labels / skyline / peaks stay anchored to ARCore's
+     *  stable tracking instead of sliding around as the compass wanders. */
+    private var yawConvergeFrames = 0
+
+    /** Frames of fast initial convergence before switching to hold-steady. */
+    private val yawConvergeFrames0 = 90
+
+    /** Lerp toward the compass-derived target during initial convergence. */
+    private val yawConvergeLerp = 0.1f
+
+    /** Steady-state lerp once converged — gentle, so it counters genuine ARCore
+     *  yaw drift without chasing the magnetometer frame to frame. */
+    private val yawHoldLerp = 0.02f
+
+    /** Within this many degrees the steady-state offset is held FIXED. ARCore
+     *  tracks rotation smoothly and drift-free over short spans, so a small
+     *  per-orientation compass error (soft-iron, tilt) must NOT be allowed to
+     *  drag the overlay — otherwise "E" slides off true east as the user pans.
+     *  Only a larger sustained discrepancy (real ARCore yaw drift) is corrected. */
+    private val yawHoldDeadbandDeg = 6f
 
     /** Push the device's true (declination-corrected) compass heading so the
      *  per-frame [update] can derive the ARCore-frame → true-north offset. */
@@ -105,8 +131,8 @@ class ArSceneController {
     val verticalPlanes: StateFlow<List<PlaneSnapshot>> = _verticalPlanes.asStateFlow()
 
     /**
-     * Latest per-pixel depth (mm, Big-endian U16) plus its dimensions
-     * and display transform. `null` when the depth API isn't
+     * Latest per-pixel depth (mm, U16, little-endian native order) plus its
+     * dimensions and display transform. `null` when the depth API isn't
      * supported on this device or the frame didn't carry one.
      *
      * The byte buffer is copied out of the ARCore Image so the
@@ -151,6 +177,14 @@ class ArSceneController {
     private var lastHitTestMs = 0L
     private val hitTestThrottleMs = 250L
 
+    /** Vertical-plane snapshot throttle. Enumerating + copying all plane
+     *  trackables runs on the Choreographer (main) thread; detected planes
+     *  change slowly, so ~2 Hz is plenty and keeps the per-frame main-thread
+     *  cost off the 60 fps hot path (iOS gets these via event-driven delegate
+     *  callbacks instead of polling). */
+    private var lastPlaneSnapshotMs = 0L
+    private val planeSnapshotThrottleMs = 500L
+
     /**
      * Called by the AR session configuration callback to record
      * whether depth mode was enabled in the session config. We try
@@ -194,7 +228,10 @@ class ArSceneController {
         _viewMatrix.value = view
 
         val proj = FloatArray(16)
-        cam.getProjectionMatrix(proj, 0, 0.05f, 1_000f)
+        // zNear/zFar match iOS (ARSessionManager: 0.01 / 1000) so both ports
+        // clip very-near markers identically. Near/far don't affect the x/y NDC
+        // of projected points, so this is parity hygiene, not a visual change.
+        cam.getProjectionMatrix(proj, 0, 0.01f, 1_000f)
         _projectionMatrix.value = proj
 
         val pos = FloatArray(3)
@@ -209,11 +246,32 @@ class ArSceneController {
         if (!compass.isNaN()) {
             val arcoreHeading = cameraHeadingDeg(view).toFloat()
             val target = normalizeDeg(compass - arcoreHeading)
-            frameYawOffsetDeg = if (!yawOffsetInitialized) {
-                yawOffsetInitialized = true
-                target
-            } else {
-                normalizeDeg(frameYawOffsetDeg + shortestDeg(target - frameYawOffsetDeg) * 0.1f)
+            when {
+                !yawOffsetInitialized -> {
+                    yawOffsetInitialized = true
+                    yawConvergeFrames = 0
+                    frameYawOffsetDeg = target
+                }
+                yawConvergeFrames < yawConvergeFrames0 -> {
+                    // Fast initial lock: average out magnetometer noise for ~1 s.
+                    yawConvergeFrames++
+                    frameYawOffsetDeg = normalizeDeg(
+                        frameYawOffsetDeg + shortestDeg(target - frameYawOffsetDeg) * yawConvergeLerp
+                    )
+                }
+                else -> {
+                    // Converged → HOLD. The offset stays put unless the compass
+                    // disagrees by more than the deadband (a real ARCore yaw
+                    // drift), so the overlay rides ARCore's smooth, drift-free
+                    // tracking and the cardinal labels don't wander as the user
+                    // pans. (iOS gets a stable true-north frame from ARKit's
+                    // gravityAndHeading; ARCore has no equivalent, so we lock the
+                    // bolted-on offset instead of tracking the compass live.)
+                    val signedDiff = shortestDeg(target - frameYawOffsetDeg)
+                    if (abs(signedDiff) > yawHoldDeadbandDeg) {
+                        frameYawOffsetDeg = normalizeDeg(frameYawOffsetDeg + signedDiff * yawHoldLerp)
+                    }
+                }
             }
         }
 
@@ -273,8 +331,10 @@ class ArSceneController {
             }
         }
 
-        // Snapshot vertical planes for the occlusion thread.
-        if (session != null) {
+        // Snapshot vertical planes for the occlusion thread (throttled — see
+        // planeSnapshotThrottleMs; this enumerate+copy runs on the main thread).
+        if (session != null && nowMs - lastPlaneSnapshotMs >= planeSnapshotThrottleMs) {
+            lastPlaneSnapshotMs = nowMs
             try {
                 _verticalPlanes.value = session.getAllTrackables(Plane::class.java)
                     .asSequence()
@@ -341,6 +401,37 @@ class ArSceneController {
     }
 
     /**
+     * Apply the true-north yaw correction to a world point: rotate it about the
+     * camera position around +Y by [frameYawOffsetDeg], for an (X=east, Z=−north)
+     * frame (`x' = x·cosδ + z·sinδ ; z' = −x·sinδ + z·cosδ`). This is the SAME
+     * transform [projectToScreen] applies before the view/projection multiply,
+     * exposed so the occlusion depth path can derive a camera-space depth from
+     * the identical rotated point — otherwise the screen pixel it samples and the
+     * marker depth it compares describe two different world directions. Returns
+     * the input array unchanged when no offset is set or the camera pose isn't
+     * known yet.
+     */
+    fun trueNorthAdjusted(world: FloatArray): FloatArray =
+        trueNorthAdjusted(world, _cameraPosition.value, frameYawOffsetDeg)
+
+    /** Pure variant taking an explicit camera position + yaw offset, so an
+     *  off-main caller can snapshot ONE consistent frame and pass it in rather
+     *  than re-reading the per-frame StateFlows (which could tear). */
+    fun trueNorthAdjusted(world: FloatArray, camPos: FloatArray?, yawDeg: Float): FloatArray {
+        if (yawDeg == 0f || camPos == null || world.size < 3) return world
+        val ox = world[0] - camPos[0]
+        val oz = world[2] - camPos[2]
+        val a = Math.toRadians(yawDeg.toDouble())
+        val ca = cos(a)
+        val sa = sin(a)
+        return floatArrayOf(
+            camPos[0] + (ox * ca + oz * sa).toFloat(),
+            world[1],
+            camPos[2] + (-ox * sa + oz * ca).toFloat()
+        )
+    }
+
+    /**
      * Project a world-space (ARCore session-frame) point into the
      * Android viewport. Mirrors iOS `projectToScreen`.
      *
@@ -354,31 +445,36 @@ class ArSceneController {
         val view = _viewMatrix.value ?: return null
         val proj = _projectionMatrix.value ?: return null
         val vp = _viewportSize.value ?: return null
+        return projectToScreen(world, view, proj, vp, _cameraPosition.value, frameYawOffsetDeg)
+    }
+
+    /**
+     * Project using an EXPLICITLY captured matrix set. The off-main occlusion
+     * worker snapshots one consistent frame (view/proj/viewport/camPos/yaw) and
+     * passes it here, so its projection can't tear across the per-frame
+     * StateFlow writes happening on the main thread. The no-arg overload above
+     * just reads the current `.value`s and delegates, so the main-thread render
+     * path is behaviourally unchanged.
+     */
+    fun projectToScreen(
+        world: FloatArray,
+        view: FloatArray,
+        proj: FloatArray,
+        vp: IntSize,
+        camPos: FloatArray?,
+        yawDeg: Float
+    ): Offset? {
         if (vp.width <= 0 || vp.height <= 0) return null
         if (world.size < 3) return null
 
-        // Correct ARCore's non-north-aligned world frame: rotate the point about
-        // the up (+Y) axis, around the CAMERA position, by the measured offset, so
-        // a point built at its TRUE bearing lands at the true real-world direction.
-        var wx = world[0]
-        val wy = world[1]
-        var wz = world[2]
-        val yaw = frameYawOffsetDeg
-        val camPos = _cameraPosition.value
-        if (yaw != 0f && camPos != null) {
-            val ox = wx - camPos[0]
-            val oz = wz - camPos[2]
-            val a = Math.toRadians(yaw.toDouble())
-            val ca = cos(a)
-            val sa = sin(a)
-            // Rotation about +Y for an (X=east, Z=−north) frame:
-            //   x' = x·cosδ + z·sinδ ;  z' = −x·sinδ + z·cosδ
-            wx = camPos[0] + (ox * ca + oz * sa).toFloat()
-            wz = camPos[2] + (-ox * sa + oz * ca).toFloat()
-        }
+        // Correct ARCore's non-north-aligned world frame by rotating the point
+        // about the camera by the measured yaw offset (see [trueNorthAdjusted]),
+        // so a point built at its TRUE bearing lands at the true real-world
+        // direction.
+        val adj = trueNorthAdjusted(world, camPos, yawDeg)
 
         // world (x, y, z, 1) → view space (column-major multiply).
-        val viewSpace = multiplyMatVec4(view, wx, wy, wz, 1f)
+        val viewSpace = multiplyMatVec4(view, adj[0], adj[1], adj[2], 1f)
         val clip = multiplyMatVec4(proj, viewSpace[0], viewSpace[1], viewSpace[2], viewSpace[3])
         val w = clip[3]
         if (w <= 0f) return null  // behind camera
@@ -443,7 +539,7 @@ class ArSceneController {
     /**
      * Raw depth image copied out of the ARCore Image so it can be
      * read after the frame is released. ARCore returns depth in
-     * millimetres as Big-endian U16 pixels in plane 0.
+     * millimetres as U16 pixels (native little-endian order) in plane 0.
      */
     data class DepthSnapshot(
         val widthPx: Int,

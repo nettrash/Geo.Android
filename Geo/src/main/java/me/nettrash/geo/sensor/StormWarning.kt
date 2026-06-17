@@ -52,7 +52,6 @@ object StormWarning {
     const val MIN_SPAN_HOURS = 1.5
     const val STEADY_BAND_HPA_OVER_3H = 1.0
     const val ALERT_DROP_HPA_OVER_3H = 3.0
-    const val SEVERE_DROP_HPA_OVER_3H = 6.0
     const val NOTIFICATION_COOLDOWN_HOURS = 3.0
     const val ALT_CLAMP_LOW = -500.0
     const val ALT_CLAMP_HIGH = 9000.0

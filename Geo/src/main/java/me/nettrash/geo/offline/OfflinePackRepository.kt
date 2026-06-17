@@ -88,11 +88,14 @@ class OfflinePackRepository @Inject constructor(
             // peaks while keeping far ones. Mirrors the live PeakFinder path.
             val peaks = osm.sortedBy { it.distance }.take(maxPackPeaks)
 
-            // 2. DEM: the centre's full skyline panorama (180×20 polar grid),
-            //    fetched in chunks for progress; each chunk goes through the
-            //    elevation service's own 200 ms throttle + retry.
+            // 2. DEM: a regular ~110 m area grid over the whole pack bounding
+            //    box (centre ± radius), fetched in chunks for progress; each
+            //    chunk goes through the elevation service's own 200 ms throttle
+            //    + retry. An area grid (not a single-observer fan) is what lets
+            //    the offline skyline resolve from *any* point in the area, not
+            //    only when standing at the pack centre.
             _statusText.value = "Caching terrain…"
-            val coords = SkylineCalculator.skylineGridCoordinates(centerLat, centerLon)
+            val coords = SkylineCalculator.offlinePrefetchCoordinates(centerLat, centerLon, radiusKm)
             val cellMap = HashMap<Pair<Int, Int>, Double>()
             val chunk = 300
             var processed = 0

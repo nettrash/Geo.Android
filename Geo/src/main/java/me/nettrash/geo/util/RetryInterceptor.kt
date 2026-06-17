@@ -75,12 +75,14 @@ class RetryInterceptor(
     /** Parse a `Retry-After` header given as an integer number of
      *  seconds. Returns `null` when absent or not a plain integer
      *  (the HTTP-date form is uncommon for these APIs and ignored in
-     *  favour of the jittered backoff). */
+     *  favour of the jittered backoff). Capped at [MAX_RETRY_AFTER_SECONDS]
+     *  so a hostile or misconfigured server can't stall a prefetch for
+     *  minutes/hours on an OkHttp thread — matches iOS's `min(seconds, 5)`. */
     private fun retryAfterMs(response: Response): Long? {
         val header = response.header("Retry-After")?.trim() ?: return null
         val seconds = header.toLongOrNull() ?: return null
         if (seconds < 0L) return null
-        return seconds * 1000L
+        return seconds.coerceAtMost(MAX_RETRY_AFTER_SECONDS) * 1000L
     }
 
     /** Short jittered backoff in the ~0.5–2 s range. */
@@ -93,5 +95,12 @@ class RetryInterceptor(
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+    }
+
+    private companion object {
+        /** Upper bound on an honoured `Retry-After`, in seconds. Matches iOS's
+         *  `min(seconds, 5)` so neither port can be stalled for long by a
+         *  hostile/misconfigured header. */
+        const val MAX_RETRY_AFTER_SECONDS = 5L
     }
 }

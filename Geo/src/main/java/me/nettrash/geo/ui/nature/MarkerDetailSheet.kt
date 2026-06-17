@@ -16,7 +16,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -26,21 +25,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nettrash.geo.R
-import me.nettrash.geo.data.model.ARHistoryPoint
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.GeoCalculations
-import java.text.SimpleDateFormat
 import java.util.Locale
 
-/** A marker the user tapped in the AR Nature view. Drives [MarkerDetailSheet]. */
+/** A marker the user tapped in the AR Nature view. Drives [MarkerDetailSheet].
+ *  (Only peaks are tappable — history points aren't shown in the AR scene.) */
 sealed interface ArMarkerSelection {
     data class Peak(val peak: NearbyPeak) : ArMarkerSelection
-    data class History(val point: ARHistoryPoint) : ArMarkerSelection
 }
 
 /**
- * Bottom-sheet detail card shown when an AR peak / history marker is tapped —
- * a richer rendering of the same fields the on-screen marker already shows.
+ * Bottom-sheet detail card shown when an AR peak marker is tapped — a richer
+ * rendering of the same fields the on-screen marker already shows.
  * Mirrors iOS `MarkerDetailSheet`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,7 +52,6 @@ fun MarkerDetailSheet(selection: ArMarkerSelection, onDismiss: () -> Unit) {
         ) {
             when (selection) {
                 is ArMarkerSelection.Peak -> PeakDetail(selection.peak)
-                is ArMarkerSelection.History -> HistoryDetail(selection.point)
             }
         }
     }
@@ -75,31 +71,6 @@ private fun PeakDetail(peak: NearbyPeak) {
     DetailRow(stringResource(R.string.field_bearing), bearing(peak.bearing))
     DetailRow(stringResource(R.string.field_coordinates), coords(peak.latitude, peak.longitude))
     DirectionsButton(peak.latitude, peak.longitude)
-}
-
-@Composable
-private fun HistoryDetail(point: ARHistoryPoint) {
-    val fmt = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
-    Text(
-        stringResource(R.string.ar_history_point),
-        color = Color.Cyan,
-        fontSize = 20.sp,
-        fontWeight = FontWeight.Bold
-    )
-    Spacer(Modifier.height(12.dp))
-    DetailRow(stringResource(R.string.ar_recorded), fmt.format(point.date))
-    DetailRow(stringResource(R.string.ar_gps_altitude), altitude(point.gpsAltitude))
-    if (point.barometerAltitude > 0) {
-        DetailRow(stringResource(R.string.ar_bar_altitude), altitude(point.barometerAltitude))
-    }
-    if (point.pressure > 0) {
-        DetailRow(stringResource(R.string.field_pressure), String.format(Locale.US, "%.1f kPa", point.pressure))
-    }
-    DetailRow(stringResource(R.string.field_velocity), String.format(Locale.US, "%.1f m/s", maxOf(0.0, point.speed)))
-    DetailRow(stringResource(R.string.field_distance), distance(point.distance))
-    DetailRow(stringResource(R.string.field_bearing), bearing(point.bearing))
-    DetailRow(stringResource(R.string.field_coordinates), coords(point.latitude, point.longitude))
-    DirectionsButton(point.latitude, point.longitude)
 }
 
 /** Opens the device's default maps app at the marker. Uses a generic `geo:`
