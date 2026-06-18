@@ -6,7 +6,7 @@ Play `versionCode`; note that `versionCode` auto-increments on every
 assemble/bundle, so the value actually uploaded to Play may be higher than the
 one recorded here.
 
-## [1.1] — 2026-06-17
+## [1.1] — 2026-06-18
 
 A correctness, accuracy and reliability release with a major Nature/AR upgrade:
 a critical first-run fix, a hard-crash fix, calibrated altitude that agrees
