@@ -29,9 +29,9 @@ class GeoCalculationsTest {
         val meters = GeoCalculations.distanceBetween(
             bigBenLat, bigBenLon, eiffelLat, eiffelLon
         )
-        // Tolerate ±2 km — the haversine formula assumes a perfect sphere
-        // and is fine to within ~0.5 % of WGS-84 reality at this distance.
-        assertThat(meters).isWithin(2_000.0).of(343_000.0)
+        // Great-circle Big Ben <-> Eiffel Tower is ~340.5 km (the previous
+        // 343 km expectation was simply wrong); +/-2 km covers sphere/WGS-84 drift.
+        assertThat(meters).isWithin(2_000.0).of(340_500.0)
     }
 
     @Test fun distanceToSelfIsZero() {
@@ -179,5 +179,47 @@ class GeoCalculationsTest {
             distance = 2_000.0
         )
         assertThat(a).isGreaterThan(1.0)  // > ~57°
+    }
+
+    // ─── cardinalDirection (8-point compass) — mirrors iOS GeometryTests ──
+
+    @Test fun cardinalDirectionBoundaries() {
+        assertThat(GeoCalculations.cardinalDirection(0.0)).isEqualTo("N")
+        assertThat(GeoCalculations.cardinalDirection(45.0)).isEqualTo("NE")
+        assertThat(GeoCalculations.cardinalDirection(90.0)).isEqualTo("E")
+        assertThat(GeoCalculations.cardinalDirection(117.0)).isEqualTo("SE") // spec example
+        assertThat(GeoCalculations.cardinalDirection(135.0)).isEqualTo("SE")
+        assertThat(GeoCalculations.cardinalDirection(180.0)).isEqualTo("S")
+        assertThat(GeoCalculations.cardinalDirection(225.0)).isEqualTo("SW")
+        assertThat(GeoCalculations.cardinalDirection(270.0)).isEqualTo("W")
+        assertThat(GeoCalculations.cardinalDirection(315.0)).isEqualTo("NW")
+    }
+
+    @Test fun cardinalDirectionWrapsAndSnaps() {
+        assertThat(GeoCalculations.cardinalDirection(360.0)).isEqualTo("N")
+        assertThat(GeoCalculations.cardinalDirection(350.0)).isEqualTo("N")  // 337.5–360 → N
+        assertThat(GeoCalculations.cardinalDirection(-45.0)).isEqualTo("NW") // negative normalises
+        assertThat(GeoCalculations.cardinalDirection(405.0)).isEqualTo("NE") // >360 normalises (45°)
+    }
+
+    @Test fun cardinalDirectionSectorBoundaries() {
+        // Lower sector edge inclusive; just below snaps to the previous
+        // sector. Locked in lockstep with iOS GeometryTests.
+        assertThat(GeoCalculations.cardinalDirection(22.5)).isEqualTo("NE")
+        assertThat(GeoCalculations.cardinalDirection(67.5)).isEqualTo("E")
+        assertThat(GeoCalculations.cardinalDirection(112.5)).isEqualTo("SE")
+        assertThat(GeoCalculations.cardinalDirection(157.5)).isEqualTo("S")
+        assertThat(GeoCalculations.cardinalDirection(202.5)).isEqualTo("SW")
+        assertThat(GeoCalculations.cardinalDirection(247.5)).isEqualTo("W")
+        assertThat(GeoCalculations.cardinalDirection(292.5)).isEqualTo("NW")
+        assertThat(GeoCalculations.cardinalDirection(337.5)).isEqualTo("N")
+        assertThat(GeoCalculations.cardinalDirection(22.4999)).isEqualTo("N")
+        assertThat(GeoCalculations.cardinalDirection(337.4999)).isEqualTo("NW")
+    }
+
+    @Test fun cardinalDirectionNonFiniteIsN() {
+        assertThat(GeoCalculations.cardinalDirection(Double.NaN)).isEqualTo("N")
+        assertThat(GeoCalculations.cardinalDirection(Double.POSITIVE_INFINITY)).isEqualTo("N")
+        assertThat(GeoCalculations.cardinalDirection(Double.NEGATIVE_INFINITY)).isEqualTo("N")
     }
 }

@@ -59,6 +59,7 @@ class PeakFinder @Inject constructor(
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
+        .addInterceptor(RetryInterceptor(minIntervalMs = 1000))
         .build()
 
     /**
@@ -69,7 +70,8 @@ class PeakFinder @Inject constructor(
     suspend fun searchPeaks(
         location: Location,
         mountainsData: MountainData?,
-        currentPeaks: List<NearbyPeak>
+        currentPeaks: List<NearbyPeak>,
+        offlinePeaks: List<NearbyPeak> = emptyList()
     ): List<NearbyPeak> {
         val last = lastSearchLocation
         if (last != null &&
@@ -85,7 +87,9 @@ class PeakFinder @Inject constructor(
 
         val now = System.currentTimeMillis()
         return withContext(Dispatchers.IO) {
-            val osmDeferred = async { searchOpenStreetMap(location) }
+            val osmDeferred = async {
+                searchOpenStreetMapArea(location.latitude, location.longitude, searchRadius)
+            }
             val knownPeaks = findKnownMountains(location, mountainsData)
 
             val freshPeaks = mutableListOf<NearbyPeak>()
@@ -96,6 +100,16 @@ class PeakFinder @Inject constructor(
             for (peak in knownPeaks) {
                 if (!isDuplicate(peak, freshPeaks)) {
                     freshPeaks.add(peak)
+                }
+            }
+
+            // Offline-pack peaks: make the area's named peaks appear with NO
+            // signal (and complement the live 5 km query when online). Stamp
+            // them fresh so the TTL prune below doesn't drop them on merge;
+            // the drop-radius filter still removes any too far to see.
+            for (peak in offlinePeaks) {
+                if (!isDuplicate(peak, freshPeaks)) {
+                    freshPeaks.add(peak.copy(lastSeenAt = now))
                 }
             }
 
@@ -140,17 +154,32 @@ class PeakFinder @Inject constructor(
         peaks: List<NearbyPeak>,
         location: Location
     ): List<NearbyPeak> {
-        return peaks.map { peak ->
-            val d = GeoCalculations.distanceBetween(
-                location.latitude, location.longitude,
-                peak.latitude, peak.longitude
-            )
-            val b = GeoCalculations.bearing(
-                location.latitude, location.longitude,
-                peak.latitude, peak.longitude
-            )
-            peak.copy(distance = d, bearing = b)
-        }
+        // Apply the same TTL + drop-radius eviction the full-search branch
+        // does, so a stationary user (who only ever takes this path) still
+        // ages out peaks that haven't been re-confirmed within peakTtlMs or
+        // have drifted outside the drop radius.
+        val now = System.currentTimeMillis()
+        val dropRadius = searchRadius * 2
+        return peaks
+            .filter { peak ->
+                val pl = Location("").apply {
+                    latitude = peak.latitude
+                    longitude = peak.longitude
+                }
+                val d = location.distanceTo(pl).toDouble()
+                d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs
+            }
+            .map { peak ->
+                val d = GeoCalculations.distanceBetween(
+                    location.latitude, location.longitude,
+                    peak.latitude, peak.longitude
+                )
+                val b = GeoCalculations.bearing(
+                    location.latitude, location.longitude,
+                    peak.latitude, peak.longitude
+                )
+                peak.copy(distance = d, bearing = b)
+            }
     }
 
     private fun isDuplicate(peak: NearbyPeak, existing: List<NearbyPeak>): Boolean {
@@ -181,16 +210,33 @@ class PeakFinder @Inject constructor(
      * called-out pitfall — those placeholders put fake peaks on the
      * horizon).
      */
-    private suspend fun searchOpenStreetMap(location: Location): List<NearbyPeak> {
+    /** Fetch OSM `natural=peak` nodes for an arbitrary area. Reused by the
+     *  offline-pack prefetch with a much larger radius than the live 5 km
+     *  search; runs on `Dispatchers.IO`. */
+    suspend fun fetchPeaksForArea(
+        centerLat: Double,
+        centerLon: Double,
+        radiusMeters: Double
+    ): List<NearbyPeak> = withContext(Dispatchers.IO) {
+        searchOpenStreetMapArea(centerLat, centerLon, radiusMeters)
+    }
+
+    private suspend fun searchOpenStreetMapArea(
+        centerLat: Double,
+        centerLon: Double,
+        radiusMeters: Double
+    ): List<NearbyPeak> {
         // Quantise lat/lon to ~110 m grid before sending to the
-        // public API. Mirrors iOS privacy note.
-        val qLat = (location.latitude * 1000).toInt() / 1000.0
-        val qLon = (location.longitude * 1000).toInt() / 1000.0
-        val radiusMeters = searchRadius.toInt()
+        // public API. Uses the shared round-half helper so Overpass,
+        // Open-Elevation and the elevation cache all bucket identically,
+        // matching iOS.
+        val qLat = TerrainElevationService.quantise(centerLat)
+        val qLon = TerrainElevationService.quantise(centerLon)
+        val radiusInt = radiusMeters.toInt()
 
         val query = """
             [out:json][timeout:10];
-            node["natural"="peak"](around:$radiusMeters,$qLat,$qLon);
+            node["natural"="peak"](around:$radiusInt,$qLat,$qLon);
             out body;
         """.trimIndent()
 
@@ -198,7 +244,10 @@ class PeakFinder @Inject constructor(
         val url = "https://overpass-api.de/api/interpreter?data=$encodedQuery"
 
         val elements: List<OverpassElement> = try {
-            val request = Request.Builder().url(url).build()
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", TerrainElevationService.USER_AGENT)
+                .build()
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) return emptyList()
             val body = response.body.string()
@@ -226,12 +275,12 @@ class PeakFinder @Inject constructor(
             val lon = element.lon ?: return@mapNotNull null
 
             val d = GeoCalculations.distanceBetween(
-                location.latitude, location.longitude, lat, lon
+                centerLat, centerLon, lat, lon
             )
-            if (d > searchRadius) return@mapNotNull null
+            if (d > radiusMeters) return@mapNotNull null
 
             val b = GeoCalculations.bearing(
-                location.latitude, location.longitude, lat, lon
+                centerLat, centerLon, lat, lon
             )
             val ele = element.tags.ele?.toDoubleOrNull()
             Candidate(name, lat, lon, d, b, ele)

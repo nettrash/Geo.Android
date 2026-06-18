@@ -12,6 +12,9 @@ interface HistoryDao {
     @Query("SELECT * FROM history_items WHERE recordDate >= :cutoff AND barometerPressure > 0 ORDER BY recordDate ASC")
     suspend fun getItemsSince(cutoff: Long): List<HistoryItem>
 
+    @Query("SELECT * FROM history_items WHERE recordDate >= :start AND recordDate <= :end AND barometerPressure > 0 ORDER BY recordDate ASC")
+    suspend fun getItemsBetween(start: Long, end: Long): List<HistoryItem>
+
     @Query("SELECT * FROM history_items ORDER BY recordDate DESC LIMIT :limit")
     suspend fun getRecentItems(limit: Int): List<HistoryItem>
 
@@ -20,4 +23,7 @@ interface HistoryDao {
 
     @Query("DELETE FROM history_items WHERE recordDate < :cutoff")
     suspend fun deleteOlderThan(cutoff: Long)
+
+    @Query("DELETE FROM history_items")
+    suspend fun deleteAll()
 }

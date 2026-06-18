@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import me.nettrash.geo.ar.ArOcclusionManager
 import me.nettrash.geo.ar.ArSceneController
 import me.nettrash.geo.ar.SkylineCalculator
+import me.nettrash.geo.ar.cameraHeadingDeg
 import java.util.Locale
 
 /**
@@ -45,13 +46,13 @@ fun ArDiagnosticsOverlay(
     occlusion: ArOcclusionManager,
     skyline: SkylineCalculator,
     peakCount: Int,
-    historyCount: Int,
     locationAccuracy: Float?,
     onDismiss: () -> Unit
 ) {
     val isTracking by controller.isTracking.collectAsState()
     val viewport by controller.viewportSize.collectAsState()
     val cameraPos by controller.cameraPosition.collectAsState()
+    val viewMatrix by controller.viewMatrix.collectAsState()
     val planes by controller.verticalPlanes.collectAsState()
     val depthSnapshot by controller.depthSnapshot.collectAsState()
     val isDepthSupported by controller.isDepthSupported.collectAsState()
@@ -91,6 +92,20 @@ fun ArDiagnosticsOverlay(
                 } ?: "—")
 
             Spacer(Modifier.height(6.dp))
+            Section("heading (true-north align)")
+            val arPose = viewMatrix?.let { cameraHeadingDeg(it) }
+            val northOffset = controller.frameYawOffsetDeg
+            // The ARCore pose heading (frame-relative), the compass-derived
+            // correction, and the resulting TRUE heading the overlay is drawn at.
+            // Point at a known direction: "corrected" should match a real compass.
+            Row2("ar pose", arPose?.let { String.format(Locale.US, "%.0f°", it) } ?: "—")
+            Row2("north offset", String.format(Locale.US, "%+.0f°", northOffset))
+            Row2("corrected (true)",
+                arPose?.let {
+                    String.format(Locale.US, "%.0f°", (((it + northOffset) % 360 + 360) % 360))
+                } ?: "—")
+
+            Spacer(Modifier.height(6.dp))
             Section("perception")
             Row2("vertical planes", planes.size.toString(),
                 ok = planes.isNotEmpty())
@@ -112,7 +127,6 @@ fun ArDiagnosticsOverlay(
             Spacer(Modifier.height(6.dp))
             Section("scene")
             Row2("peaks", peakCount.toString())
-            Row2("history points", historyCount.toString())
             Row2("gps accuracy",
                 locationAccuracy?.let { String.format(Locale.US, "%.1f m", it) } ?: "—")
 

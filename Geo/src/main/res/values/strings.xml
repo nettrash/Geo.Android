@@ -25,6 +25,11 @@
     <string name="section_highest_mountain">HIGHEST MOUNTAIN</string>
     <string name="section_tracking">TRACKING</string>
     <string name="section_statistics">STATISTICS</string>
+    <string name="section_solar">S U N</string>
+
+    <!-- Coordinate unit suffixes (standard lat/lon abbreviations) -->
+    <string name="unit_latitude">lat</string>
+    <string name="unit_longitude">lon</string>
 
     <!-- Generic field labels -->
     <string name="field_name">Name</string>
@@ -35,10 +40,40 @@
     <string name="field_velocity">Velocity</string>
     <string name="field_geography">Geography</string>
     <string name="field_mountain">Mountain</string>
-    <string name="field_percent_everest">% Everest</string>
+    <string name="field_percent_everest" formatted="false">% Everest</string>
     <string name="field_calibrating">calibrating…</string>
+    <string name="field_calibrated">calibrated</string>
+    <string name="field_trend">3 h trend</string>
+
+    <!-- Known-elevation manual calibration (M5b) -->
+    <string name="calibrate_action">Calibrate altitude</string>
+    <string name="calibrate_recalibrate">Recalibrate altitude</string>
+    <string name="calibrate_title">Calibrate altitude</string>
+    <string name="calibrate_message">Pin the altimeter to a known elevation (a trailhead or summit marker) for instant, weather-proof, offline accuracy. The calibration decays over ~6 h as weather drifts.</string>
+    <string name="calibrate_current">Current altitude: %1$d m</string>
+    <string name="calibrate_field_label">I am at (m)</string>
+    <string name="calibrate_clear">Clear calibration</string>
+    <string name="calibrate_waiting">Waiting for a barometer reading…</string>
     <string name="field_height">Height</string>
     <string name="field_region">Region</string>
+
+    <!-- Solar panel (golden-hour / sunrise-sunset feature) -->
+    <string name="field_countdown">Countdown</string>
+    <string name="field_dawn">Dawn</string>
+    <string name="field_sunrise">Sunrise</string>
+    <string name="field_golden_am">Golden AM</string>
+    <string name="field_solar_noon">Solar noon</string>
+    <string name="field_golden_pm">Golden PM</string>
+    <string name="field_sunset">Sunset</string>
+    <string name="field_dusk">Dusk</string>
+    <string name="field_day_length">Day length</string>
+    <string name="solar_waiting">Waiting for location…</string>
+    <string name="solar_sun_up">Sun up all day</string>
+    <string name="solar_polar_night">Polar night</string>
+
+    <!-- Peak bearing / compass arrow -->
+    <string name="field_bearing">Bearing</string>
+    <string name="compass_calibrate">Calibrate compass — move in a figure-8</string>
     <string name="field_country">Country</string>
     <string name="field_location">Location</string>
     <string name="field_first_ascent">First Ascent</string>
@@ -49,6 +84,49 @@
     <string name="action_continue">Continue</string>
     <string name="action_open_settings">Open Settings</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_close">Close</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_done">Done</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_clear_history">Clear history</string>
+    <string name="clear_history_title">Clear history?</string>
+    <string name="clear_history_message">This permanently deletes all recorded history and cannot be undone.</string>
+
+    <!-- Summit log (auto-detect arrival at a known peak) -->
+    <string name="section_summits">SUMMITS</string>
+    <string name="summit_empty">No summits logged yet — when you reach a known peak, Geo offers to log it here.</string>
+    <string name="summit_log">Log ascent</string>
+    <string name="summit_not_now">Not now</string>
+    <string name="summit_near_title">Near %1$s</string>
+    <string name="summit_near_message">Log this ascent? Your altitude is the barometric reading — approximate unless calibrated. Only the peak\'s public location is stored, not yours.</string>
+    <string name="summit_your_altitude">Your altitude</string>
+    <string name="summit_elevation">Elevation</string>
+    <string name="summit_logged">Logged</string>
+    <string name="summit_collection">Collection</string>
+    <string name="summit_note">Note</string>
+    <string name="summit_set_seven">Seven Summits</string>
+    <string name="summit_set_snow_leopard">Snow Leopard</string>
+    <string name="summit_set_highest">Highest peaks</string>
+    <string name="summit_set_peak">Peak</string>
+    <string name="action_share">Share</string>
+
+    <!-- Trip Recorder (M5c) -->
+    <string name="section_trips">TRIPS</string>
+    <string name="trip_start">Start trip</string>
+    <string name="trip_stop_save">Stop &amp; Save</string>
+    <string name="trip_discard">Discard</string>
+    <string name="trip_recording_format">● Recording — %1$s</string>
+    <string name="trip_empty">No trips yet — tap Start to record an outing.</string>
+    <string name="trip_name_dialog_title">Name this trip</string>
+    <string name="trip_default_name_prefix">Trip</string>
+    <string name="trip_field_ascent">Ascent</string>
+    <string name="trip_field_descent">Descent</string>
+    <string name="trip_field_max_altitude">Max altitude</string>
+    <string name="trip_field_min_altitude">Min altitude</string>
+    <string name="trip_field_distance">Distance</string>
+    <string name="trip_field_moving_time">Moving time</string>
+    <string name="trip_field_total_time">Total time</string>
 
     <!-- Fallbacks -->
     <string name="fallback_loading">Loading…</string>
@@ -86,6 +164,38 @@
     <string name="ar_distance_source_raycast">Raycast</string>
     <string name="ar_distance_unknown">--</string>
 
+    <!-- Tap-to-identify markers + freeze-frame share -->
+    <string name="ar_capture">Capture panorama</string>
+    <string name="ar_history_point">History point</string>
+    <string name="ar_recorded">Recorded</string>
+    <string name="ar_gps_altitude">GPS altitude</string>
+    <string name="ar_bar_altitude">Barometric altitude</string>
+    <string name="ar_share_title">Share panorama</string>
+    <plurals name="ar_share_markers">
+        <item quantity="one">%1$d marker</item>
+        <item quantity="other">%1$d markers</item>
+    </plurals>
+
+    <!-- Offline expedition pack (keys mirror iOS Localizable.strings literals) -->
+    <string name="offline_expedition_pack">Expedition pack</string>
+    <string name="offline_no_areas">No areas saved</string>
+    <string name="offline_downloading">Downloading…</string>
+    <string name="offline_manage">Manage offline areas</string>
+    <string name="offline_packs_title">Offline packs</string>
+    <string name="offline_section_download">DOWNLOAD CURRENT AREA</string>
+    <string name="offline_waiting_gps">Waiting for a GPS fix…</string>
+    <string name="offline_name_optional">Name (optional)</string>
+    <string name="offline_radius">Radius</string>
+    <string name="offline_download_area">Download this area</string>
+    <string name="offline_section_saved">SAVED PACKS</string>
+    <string name="offline_none_yet">None yet</string>
+    <string name="offline_footer">Caches the area\'s named peaks and the terrain skyline so the AR Nature view works with no signal. Map tiles aren\'t included (provider licensing).</string>
+    <string name="offline_download_region">Download a region</string>
+    <string name="offline_download_here">Download here</string>
+    <string name="offline_delete_title">Delete offline area?</string>
+    <string name="offline_name_area">Name this area</string>
+    <string name="offline_rename_title">Rename area</string>
+
     <!-- Permission banner (location / motion) -->
     <string name="permissions_banner_headline_both">Location &amp; motion access required</string>
     <string name="permissions_banner_headline_location">Location access required</string>
@@ -104,6 +214,7 @@
     <string name="widget_label_speed">Speed</string>
     <string name="widget_label_lat">Lat</string>
     <string name="widget_label_lon">Lon</string>
+    <string name="widget_no_data">No information available…</string>
 
     <!-- Widget configuration screen -->
     <string name="widget_config_title">Configure widget</string>

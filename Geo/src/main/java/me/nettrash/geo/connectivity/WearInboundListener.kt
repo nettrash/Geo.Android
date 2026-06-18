@@ -1,5 +1,8 @@
 package me.nettrash.geo.connectivity
 
+import com.google.android.gms.wearable.DataEvent
+import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import dagger.hilt.android.AndroidEntryPoint
@@ -7,6 +10,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import me.nettrash.geo.data.db.HistoryItem
 import me.nettrash.geo.data.model.InformationToken
@@ -64,7 +69,41 @@ class WearInboundListener : WearableListenerService() {
         scope.launch { maybePersist(token) }
     }
 
-    private suspend fun maybePersist(token: InformationToken) {
+    /**
+     * Fallback delivery path. When the watch can't reach us live it
+     * persists the snapshot as a `DataItem` (see the watch-side
+     * `WearOutboundBridge` DataClient fallback / iOS
+     * `updateApplicationContext`); the Data Layer replays it here when
+     * the phone app next runs. We decode the same JSON payload and
+     * funnel it through the same throttled [maybePersist] as live
+     * messages, so a relaunch backfills the missed sample exactly once.
+     */
+    override fun onDataChanged(events: DataEventBuffer) {
+        for (event in events) {
+            if (event.type != DataEvent.TYPE_CHANGED) continue
+            val item = event.dataItem
+            if (item.uri.path != PATH_SNAPSHOT) continue
+            val payload = runCatching {
+                DataMapItem.fromDataItem(item).dataMap.getByteArray(KEY_SNAPSHOT)
+            }.getOrNull() ?: continue
+            if (payload.isEmpty()) continue
+            val text = runCatching { String(payload, Charsets.UTF_8) }.getOrNull() ?: continue
+            val token = runCatching {
+                json.decodeFromString<InformationToken>(text)
+            }.getOrNull() ?: continue
+            if (token.barPreassure <= 0) continue
+            scope.launch { maybePersist(token) }
+        }
+    }
+
+    private suspend fun maybePersist(token: InformationToken) = persistMutex.withLock {
+        // The throttle is a read-decide-write over shared static state.
+        // Each inbound message is dispatched on the multi-threaded
+        // Dispatchers.IO pool, so without a lock two near-simultaneous
+        // samples could both read the same `last`/`lastPersistedAtMs`,
+        // both pass the gate, and both insert — partially defeating the
+        // 30 s / 0.1 kPa cap. Holding the mutex across the decision AND
+        // the state update keeps the check-then-act atomic.
         val now = System.currentTimeMillis()
         val last = lastPersistedToken
         if (last != null) {
@@ -75,7 +114,7 @@ class WearInboundListener : WearableListenerService() {
                     "Inbound watch sample skipped: Δp=${"%.4f".format(deltaKpa)} kPa, " +
                         "Δt=${deltaMs}ms"
                 )
-                return
+                return@withLock
             }
         }
         lastPersistedToken = token
@@ -104,6 +143,8 @@ class WearInboundListener : WearableListenerService() {
 
     private companion object {
         const val PATH_SNAPSHOT = "/geo/snapshot"
+        /** DataMap key the watch-side DataClient fallback writes under. */
+        const val KEY_SNAPSHOT = "snapshot"
         /** Skip inserts when pressure hasn't moved at least this much. */
         const val PRESSURE_DELTA_KPA = 0.1
         /** Hard minimum spacing between inserts, regardless of pressure delta. */
@@ -115,5 +156,11 @@ class WearInboundListener : WearableListenerService() {
         // messages and back-to-back ones would all get persisted).
         @Volatile var lastPersistedToken: InformationToken? = null
         @Volatile var lastPersistedAtMs: Long = 0L
+
+        // Serializes the read-decide-write throttle sequence above so
+        // concurrent Dispatchers.IO coroutines can't both pass the gate
+        // on the same stale state and double-insert. Static for the
+        // same reason as the fields it guards.
+        private val persistMutex = Mutex()
     }
 }

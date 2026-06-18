@@ -1,9 +1,8 @@
-Where you are, what's around you, and how high.
+Version 1.1
 
-• Live altitude from barometer + GPS, side-by-side.
-• Nearby peaks: the Seven Summits and the world's tallest 100, with photos and elevations.
-• Map view pinning your position alongside famous peaks nearby.
-• AR view (where supported) with peak names on the camera.
-• Home-screen widget: pressure, altitude, position, speed.
-• Local pressure history.
-• On-device. No tracking. No ads.
+• Fixes a first-launch issue where location and altitude wouldn't start until you reopened the app.
+• More accurate altitude that now agrees across the phone, widget and watch.
+• AR terrain skyline loads instantly and works offline after a first visit.
+• New: Clear history, plus automatic cleanup of very old data.
+• Fixed a crash when opening Directions without Google Maps.
+• Many reliability and battery improvements.

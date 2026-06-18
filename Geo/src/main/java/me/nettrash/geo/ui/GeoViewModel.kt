@@ -6,16 +6,27 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import me.nettrash.geo.data.db.HistoryItem
-import me.nettrash.geo.data.model.ARHistoryPoint
+import me.nettrash.geo.data.db.SummitLog
+import me.nettrash.geo.data.db.Trip
 import me.nettrash.geo.data.model.DataItem
 import me.nettrash.geo.data.model.DataPoint
 import me.nettrash.geo.data.model.MountainData
+import me.nettrash.geo.data.model.MountainInfo
+import me.nettrash.geo.data.model.MountainList
 import me.nettrash.geo.data.model.NearbyPeak
+import me.nettrash.geo.offline.OfflinePack
+import me.nettrash.geo.offline.OfflinePackRepository
+import java.util.Locale
 import me.nettrash.geo.data.repository.HistoryRepository
 import me.nettrash.geo.data.snapshot.SharedSnapshotStore
 import me.nettrash.geo.ar.ArOcclusionManager
@@ -23,12 +34,16 @@ import me.nettrash.geo.ar.SkylineCalculator
 import me.nettrash.geo.location.LocationManager
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.sensor.DeviceMotionManager
+import me.nettrash.geo.sensor.PressureSample
+import me.nettrash.geo.sensor.PressureTrend
+import me.nettrash.geo.sensor.StormWarning
 import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.MountainLoader
 import me.nettrash.geo.util.PeakFinder
+import me.nettrash.geo.util.QnhRepository
+import me.nettrash.geo.util.TripRecordingStore
 import me.nettrash.geo.widget.WidgetUpdater
-import java.util.Date
 import javax.inject.Inject
 
 @HiltViewModel
@@ -38,6 +53,7 @@ class GeoViewModel @Inject constructor(
     val locationManager: LocationManager,
     val motionManager: DeviceMotionManager,
     private val historyRepository: HistoryRepository,
+    private val qnhRepository: QnhRepository,
     private val mountainLoader: MountainLoader,
     private val peakFinder: PeakFinder,
     private val widgetUpdater: WidgetUpdater,
@@ -47,7 +63,8 @@ class GeoViewModel @Inject constructor(
     val skylineCalculator: SkylineCalculator,
     /** Exposed publicly so NatureScreen can feed targets in and
      *  read back the occluded-ID set. */
-    val occlusionManager: ArOcclusionManager
+    val occlusionManager: ArOcclusionManager,
+    private val offlinePackRepository: OfflinePackRepository
 ) : ViewModel() {
 
     // Mountain data
@@ -87,13 +104,47 @@ class GeoViewModel @Inject constructor(
     private val _historyItems = MutableStateFlow<List<HistoryItem>>(emptyList())
     val historyItems: StateFlow<List<HistoryItem>> = _historyItems.asStateFlow()
 
+    /** Latest de-trended 3-hour pressure tendency (M5a), recomputed on
+     *  each history refresh. Drives the Info barometer-card trend chip;
+     *  the authoritative storm alerting runs off [me.nettrash.geo.worker
+     *  .BarometerRefreshWorker]. */
+    private val _pressureTrend = MutableStateFlow(PressureTrend.UNKNOWN)
+    val pressureTrend: StateFlow<PressureTrend> = _pressureTrend.asStateFlow()
+
+    // Trip Recorder (M5c)
+    private val tripStore = TripRecordingStore(appContext)
+    /** Epoch-ms the current recording started, or null when not recording. */
+    private val _tripStartedAt = MutableStateFlow(tripStore.startedAtMs())
+    val tripStartedAt: StateFlow<Long?> = _tripStartedAt.asStateFlow()
+    private val _trips = MutableStateFlow<List<Trip>>(emptyList())
+    val trips: StateFlow<List<Trip>> = _trips.asStateFlow()
+
+    // ── Summit log (auto-detect arrival at a known peak) ─────────
+    private val _summitLogs = MutableStateFlow<List<SummitLog>>(emptyList())
+    val summitLogs: StateFlow<List<SummitLog>> = _summitLogs.asStateFlow()
+
+    /** The nearby known peak currently offered for logging (within range, not
+     *  dismissed, not already logged recently). Drives the proximity prompt. */
+    private val _nearbyUnloggedPeak = MutableStateFlow<SummitCandidate?>(null)
+    val nearbyUnloggedPeak: StateFlow<SummitCandidate?> = _nearbyUnloggedPeak.asStateFlow()
+
+    /** Peak keys the user dismissed/logged this approach; cleared when they
+     *  leave all peaks' range so a fresh re-approach can prompt again. */
+    private val dismissedSummitKeys = mutableSetOf<String>()
+
+    /** Horizontal radius (m) within which we offer to log a summit. Manual
+     *  confirm only — barometric altitude bias means we never auto-log. */
+    private val summitProximityRadiusM = 500.0
+
+    data class SummitCandidate(
+        val peak: MountainInfo,
+        val peakSet: String,
+        val peakIdentifier: String
+    )
+
     // Peaks for AR
     private val _peaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
     val peaks: StateFlow<List<NearbyPeak>> = _peaks.asStateFlow()
-
-    // AR History points
-    private val _arHistoryPoints = MutableStateFlow<List<ARHistoryPoint>>(emptyList())
-    val arHistoryPoints: StateFlow<List<ARHistoryPoint>> = _arHistoryPoints.asStateFlow()
 
     private val trackingMutableData = mutableListOf<DataPoint>()
 
@@ -112,6 +163,13 @@ class GeoViewModel @Inject constructor(
         // wiring sensors / starting location. Mirrors iOS
         // `GeoAppDelegate.restoreFromSharedStorage()`.
         restoreFromSharedStorage()
+
+        // Retention prune: drop history older than the ~1-year window.
+        // Runs once at startup off the main thread. Mirrors iOS
+        // `History` launch-time prune.
+        viewModelScope.launch(Dispatchers.IO) {
+            historyRepository.prune()
+        }
 
         // Set up barometer callbacks
         barometerManager.onDataUpdated = {
@@ -135,8 +193,59 @@ class GeoViewModel @Inject constructor(
         }
         locationManager.startLocationUpdates()
 
+        // Summit-log proximity detection: offer to log when the user is within
+        // `summitProximityRadiusM` of a known peak. Re-evaluated only when the
+        // nearest in-range peak actually changes (distinctUntilChanged), so the
+        // de-dup DB check runs rarely, not on every GPS fix.
+        combine(
+            locationManager.closestMountain,
+            locationManager.closestMountainDistance
+        ) { peak, dist ->
+            if (peak != null && dist != null && dist < summitProximityRadiusM &&
+                peak.coordinates?.latitude != null && peak.coordinates?.longitude != null
+            ) peak else null
+        }
+            .distinctUntilChanged { a, b -> summitKey(a) == summitKey(b) }
+            .onEach { peak -> evaluateSummitCandidate(peak) }
+            .launchIn(viewModelScope)
+
         // Load initial history
         refreshHistory()
+    }
+
+    private suspend fun evaluateSummitCandidate(peak: MountainInfo?) {
+        if (peak == null) {
+            _nearbyUnloggedPeak.value = null
+            dismissedSummitKeys.clear()   // out of range → re-approach may prompt
+            return
+        }
+        val key = summitKey(peak) ?: return
+        if (key in dismissedSummitKeys || historyRepository.summitLoggedRecently(key, 18)) {
+            _nearbyUnloggedPeak.value = null
+        } else {
+            _nearbyUnloggedPeak.value = SummitCandidate(peak, deriveSummitSet(peak), key)
+        }
+    }
+
+    /** Stable de-dup key for a peak, from its name + rounded coordinates. */
+    private fun summitKey(peak: MountainInfo?): String? {
+        val c = peak?.coordinates ?: return null
+        val lat = c.latitude ?: return null
+        val lon = c.longitude ?: return null
+        return "${peak.name ?: ""}@${String.format(Locale.US, "%.4f", lat)},${String.format(Locale.US, "%.4f", lon)}"
+    }
+
+    /** Which curated set the peak belongs to (Seven Summits / Snow Leopard take
+     *  precedence over "highest"). */
+    private fun deriveSummitSet(peak: MountainInfo): String {
+        val data = _mountainsData.value ?: return "highest"
+        fun has(list: MountainList?) =
+            list?.mountains?.any { it.name == peak.name && it.coordinates == peak.coordinates } == true
+        return when {
+            has(data.sevenPeaks) -> "sevenPeaks"
+            has(data.snowLeopardOfRussia) -> "snowLeopardOfRussia"
+            else -> "highest"
+        }
     }
 
     /**
@@ -184,27 +293,202 @@ class GeoViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Dirty flag mirroring iOS `History.isDirty`. recordHistory (and any
+     * other insert path) flips this instead of eagerly rebuilding the
+     * graphs; UI surfaces call [refreshIfNeeded] which no-ops when clean.
+     * `@Volatile` because it is read/written from coroutines.
+     */
+    @Volatile
+    private var historyDirty: Boolean = true
+
+    /** Mark the history cache stale without rebuilding (cheap). */
+    private fun markHistoryDirty() {
+        historyDirty = true
+    }
+
+    /**
+     * Refresh the history-derived StateFlows only when something has
+     * changed since the last rebuild. Called from the Stat / Map / AR
+     * surfaces. Mirrors iOS `History.refreshIfNeeded()`.
+     */
+    fun refreshIfNeeded() {
+        if (!historyDirty) return
+        refreshHistory()
+    }
+
     fun refreshHistory() {
+        // Clear the flag up-front so concurrent inserts that land during
+        // the rebuild re-mark it dirty rather than being lost.
+        historyDirty = false
         viewModelScope.launch {
+            // Fetch the 30-day window ONCE and feed it into all three
+            // builders (was: one query here + one inside each build*,
+            // i.e. four identical SELECTs per refresh — see A9/A23).
             val items = historyRepository.getItemsSince()
             _historyItems.value = items
 
-            val (pData, pMin, pMax) = historyRepository.buildPressureDataSet()
+            val (pData, pMin, pMax) = historyRepository.buildPressureDataSet(items)
             _pressureDataSet.value = pData
             _pressureMin.value = pMin
             _pressureMax.value = pMax
 
-            val (bData, bMin, bMax) = historyRepository.buildBarometerAltitudeDataSet()
+            val (bData, bMin, bMax) = historyRepository.buildBarometerAltitudeDataSet(items)
             _barometerAltDataSet.value = bData
             _barometerAltMin.value = bMin
             _barometerAltMax.value = bMax
 
-            val (gData, gMin, gMax) = historyRepository.buildGPSAltitudeDataSet()
+            val (gData, gMin, gMax) = historyRepository.buildGPSAltitudeDataSet(items)
             _gpsAltDataSet.value = gData
             _gpsAltMin.value = gMin
             _gpsAltMax.value = gMax
+
+            // De-trended 3-hour pressure tendency (M5a). The shared fit
+            // filters to its own 3 h window, so feeding the full 30-day
+            // set is fine.
+            val samples = items.map {
+                PressureSample(it.recordDate, it.barometerPressure, it.gpsAltitude)
+            }
+            _pressureTrend.value = StormWarning.tendency(samples, System.currentTimeMillis())
         }
     }
+
+    /**
+     * Delete all recorded history, then rebuild the derived datasets so
+     * the Stat / Map / AR surfaces empty out immediately. Backs the
+     * "Clear history" action on the Stat screen (behind a confirmation).
+     */
+    fun clearHistory() {
+        viewModelScope.launch {
+            historyRepository.clearAll()
+            refreshHistory()
+        }
+    }
+
+    // ── Trip Recorder (M5c) ──────────────────────────────────────
+
+    val isRecordingTrip: Boolean get() = _tripStartedAt.value != null
+
+    fun loadTrips() {
+        viewModelScope.launch { _trips.value = historyRepository.getTrips() }
+    }
+
+    fun startTrip() {
+        val now = System.currentTimeMillis()
+        tripStore.setStartedAtMs(now)
+        _tripStartedAt.value = now
+    }
+
+    /** Stop + save the in-progress recording under [name], then reload the list. */
+    fun stopTrip(name: String) {
+        val start = _tripStartedAt.value ?: return
+        val end = System.currentTimeMillis()
+        // Clear the recording state synchronously (before the async save) so the
+        // start can't be re-consumed — closes the double-save and
+        // discard-after-save windows. Mirrors iOS's synchronous stop().
+        tripStore.clear()
+        _tripStartedAt.value = null
+        viewModelScope.launch {
+            try {
+                historyRepository.saveTrip(name, start, end)
+                _trips.value = historyRepository.getTrips()
+            } catch (t: Throwable) {
+                // Save failed — restore the in-progress recording so the user
+                // can retry rather than lose it.
+                AppLog.app.warn("Trip save failed; restoring recording state", t)
+                tripStore.setStartedAtMs(start)
+                _tripStartedAt.value = start
+            }
+        }
+    }
+
+    /** Abandon the in-progress recording without saving. */
+    fun cancelTrip() {
+        tripStore.clear()
+        _tripStartedAt.value = null
+    }
+
+    // ── Manual altitude calibration (M5b) ────────────────────────
+
+    /** Current manual calibration (null = none), for the barometer-card badge. */
+    val altitudeCalibration: StateFlow<QnhRepository.Calibration?> get() = qnhRepository.calibration
+
+    /** Pin the altimeter to [knownAltitudeM] using the live raw pressure. */
+    fun calibrateAltitude(knownAltitudeM: Double) {
+        // Need a real station-pressure sample to back-solve the QNH; the 0.0
+        // placeholder (no reading yet) would store a bogus calibration. The UI
+        // also gates this, but guard the boundary too. Mirrors iOS `canCalibrate`.
+        val livePressureKpa = barometerManager.pressure.value
+        if (livePressureKpa <= 0.0) return
+        qnhRepository.calibrate(knownAltitudeM, livePressureKpa)
+    }
+
+    fun clearAltitudeCalibration() {
+        qnhRepository.clearCalibration()
+    }
+
+    fun isAltitudeCalibrated(nowMs: Long): Boolean = qnhRepository.isCalibrated(nowMs)
+
+    fun deleteTrip(trip: Trip) {
+        viewModelScope.launch {
+            historyRepository.deleteTrip(trip)
+            _trips.value = historyRepository.getTrips()
+        }
+    }
+
+    // ── Summit log actions ───────────────────────────────────────
+
+    fun loadSummitLogs() {
+        viewModelScope.launch { _summitLogs.value = historyRepository.getSummitLogs() }
+    }
+
+    /** Log the current nearby peak with an optional [note], using the live
+     *  barometric altitude as the measured value. No-op if nothing is in range. */
+    fun logSummit(note: String) {
+        val candidate = _nearbyUnloggedPeak.value ?: return
+        val peak = candidate.peak
+        val log = SummitLog(
+            peakName = peak.name ?: "",
+            peakIdentifier = candidate.peakIdentifier,
+            peakSet = candidate.peakSet,
+            peakAltitude = peak.height ?: 0,
+            latitude = peak.coordinates?.latitude ?: 0.0,
+            longitude = peak.coordinates?.longitude ?: 0.0,
+            loggedDate = System.currentTimeMillis(),
+            measuredAltitude = barometerManager.height.value,
+            note = note.trim().ifEmpty { null }
+        )
+        dismissedSummitKeys.add(candidate.peakIdentifier)
+        _nearbyUnloggedPeak.value = null
+        viewModelScope.launch {
+            historyRepository.saveSummitLog(log)
+            _summitLogs.value = historyRepository.getSummitLogs()
+        }
+    }
+
+    /** Dismiss the proximity prompt without logging (suppressed until the user
+     *  walks out of range and re-approaches). */
+    fun dismissNearbySummit() {
+        _nearbyUnloggedPeak.value?.let { dismissedSummitKeys.add(it.peakIdentifier) }
+        _nearbyUnloggedPeak.value = null
+    }
+
+    fun deleteSummitLog(log: SummitLog) {
+        viewModelScope.launch {
+            historyRepository.deleteSummitLog(log)
+            _summitLogs.value = historyRepository.getSummitLogs()
+        }
+    }
+
+    fun updateSummitNote(log: SummitLog, note: String) {
+        viewModelScope.launch {
+            historyRepository.updateSummitLog(log.copy(note = note.trim().ifEmpty { null }))
+            _summitLogs.value = historyRepository.getSummitLogs()
+        }
+    }
+
+    suspend fun tripElevationProfile(trip: Trip): List<Double> =
+        historyRepository.tripElevationProfile(trip.startDate, trip.endDate)
 
     private fun recordHistory(location: Location) {
         viewModelScope.launch {
@@ -218,7 +502,10 @@ class GeoViewModel @Inject constructor(
                 gpsVelocity = maxOf(location.speed.toDouble(), 0.0)
             )
             historyRepository.insert(item)
-            refreshHistory()
+            // Mark dirty instead of rebuilding all three graph datasets
+            // on every step insert; the Stat/Map/AR surfaces pull a
+            // refresh via refreshIfNeeded(). Mirrors iOS markDirty().
+            markHistoryDirty()
         }
     }
 
@@ -236,50 +523,45 @@ class GeoViewModel @Inject constructor(
     fun searchForPeaks() {
         val loc = locationManager.location.value ?: return
         viewModelScope.launch {
-            val results = peakFinder.searchPeaks(loc, _mountainsData.value, _peaks.value)
+            val results = peakFinder.searchPeaks(
+                loc, _mountainsData.value, _peaks.value,
+                offlinePackRepository.combinedPeaks.value
+            )
             _peaks.value = results
         }
     }
 
-    fun loadARHistoryPoints() {
-        val userLoc = locationManager.location.value ?: return
-        viewModelScope.launch {
-            // Time-filter first, area-filter second. Mirrors the
-            // iOS port's correction: we want "the user's 10 most
-            // recent points, of which we render the nearby ones",
-            // NOT "any of the last 200 points that happen to be
-            // within range" — the latter put 6-month-old markers
-            // back into the AR scene when the user wandered close
-            // to an old position.
-            val items = historyRepository.getRecentItems(10)
-            val maxDistance = 1000.0
+    // ─── Offline expedition pack ──────────────────────────────────────
+    // Pre-cached area (OSM peaks + terrain DEM) so AR/skyline survive a
+    // no-signal summit. The repository seeds the live peak/elevation caches
+    // at launch; these just surface its state + actions to the Info screen.
+    val offlinePacks: StateFlow<List<OfflinePack>> = offlinePackRepository.packs
+    val offlinePackDownloading: StateFlow<Boolean> = offlinePackRepository.isDownloading
+    val offlinePackProgress: StateFlow<Float> = offlinePackRepository.progress
+    val offlinePackStatus: StateFlow<String> = offlinePackRepository.statusText
 
-            _arHistoryPoints.value = items.mapNotNull { item ->
-                val distance = GeoCalculations.distanceBetween(
-                    userLoc.latitude, userLoc.longitude,
-                    item.gpsLatitude, item.gpsLongitude
-                )
-                if (distance > maxDistance || distance < 1) return@mapNotNull null
-
-                val bearing = GeoCalculations.bearing(
-                    userLoc.latitude, userLoc.longitude,
-                    item.gpsLatitude, item.gpsLongitude
-                )
-
-                ARHistoryPoint.create(
-                    date = Date(item.recordDate),
-                    latitude = item.gpsLatitude,
-                    longitude = item.gpsLongitude,
-                    gpsAltitude = item.gpsAltitude,
-                    barometerAltitude = item.barometerAltitude,
-                    pressure = item.barometerPressure,
-                    speed = item.gpsVelocity,
-                    distance = distance,
-                    bearing = bearing
-                )
-            }
+    /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
+    fun downloadOfflinePack(name: String, radiusKm: Double) {
+        val loc = locationManager.location.value ?: return
+        // Off the Main dispatcher: createPack builds the ~3600-point skyline grid
+        // and merges results on the caller thread (the network calls re-dispatch
+        // to IO themselves), so keep that CPU work off the UI thread.
+        viewModelScope.launch(Dispatchers.Default) {
+            offlinePackRepository.createPack(name, loc.latitude, loc.longitude, radiusKm)
         }
     }
+
+    fun deleteOfflinePack(pack: OfflinePack) = offlinePackRepository.delete(pack)
+
+    /** Download a pack centred on an explicit map point (used by the Map tab's
+     *  "choose area" flow) rather than the current GPS location. */
+    fun downloadOfflinePackAt(name: String, centerLat: Double, centerLon: Double, radiusKm: Double) {
+        viewModelScope.launch(Dispatchers.Default) {
+            offlinePackRepository.createPack(name, centerLat, centerLon, radiusKm)
+        }
+    }
+
+    fun renameOfflinePack(pack: OfflinePack, newName: String) = offlinePackRepository.rename(pack, newName)
 
     private fun updateWidget() {
         // Throttled push — see WidgetUpdater.pushThrottled for the

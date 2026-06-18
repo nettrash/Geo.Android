@@ -1,6 +1,7 @@
 package me.nettrash.geo.widget
 
 import android.content.Context
+import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -94,6 +95,14 @@ class GeoWidget : GlanceAppWidget() {
                     .padding(12.dp)
             ) {
 
+                // Beyond this age the snapshot is treated as stale: the
+                // header shows a relative age ("2 h ago") instead of a
+                // current-looking time, and the carried-forward GPS
+                // section is dimmed. Kept in sync with the iOS widget
+                // (30 min).
+                val isStale = data.hasData &&
+                    (System.currentTimeMillis() - data.updatedAt) > STALENESS_THRESHOLD_MS
+
                 // ── Header ───────────────────────────────────────────────
                 Row(
                     modifier = GlanceModifier
@@ -111,13 +120,19 @@ class GeoWidget : GlanceAppWidget() {
                         )
                     )
                     Spacer(GlanceModifier.defaultWeight())
-                    val timeStr = if (data.updatedAt > 0L)
-                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(data.updatedAt))
-                    else "--:--"
+                    val timeStr = when {
+                        !data.hasData || data.updatedAt <= 0L -> "--:--"
+                        isStale -> relativeAge(data.updatedAt)
+                        else -> SimpleDateFormat("HH:mm", Locale.getDefault())
+                            .format(Date(data.updatedAt))
+                    }
                     Text(
                         timeStr,
                         style = TextStyle(
-                            color = androidx.glance.unit.ColorProvider(Color(0xFF888888)),
+                            // Warn-orange when stale so the age stands out.
+                            color = androidx.glance.unit.ColorProvider(
+                                if (isStale) Color(0xFFFF9800) else Color(0xFF888888)
+                            ),
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace
                         )
@@ -126,16 +141,31 @@ class GeoWidget : GlanceAppWidget() {
 
                 Divider()
 
-                if (showBarometer) {
-                    BarometerSection(context, data)
-                }
+                if (!data.hasData) {
+                    // First run / cleared storage / decode failure: show a
+                    // placeholder instead of authoritative-looking zeros.
+                    // Mirrors the iOS widget's "No information" branch.
+                    Text(
+                        context.getString(R.string.widget_no_data),
+                        style = TextStyle(
+                            color = androidx.glance.unit.ColorProvider(Color(0xFF888888)),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        modifier = GlanceModifier.padding(vertical = 12.dp)
+                    )
+                } else {
+                    if (showBarometer) {
+                        BarometerSection(context, data)
+                    }
 
-                if (showBarometer && showGps) {
-                    Divider()
-                }
+                    if (showBarometer && showGps) {
+                        Divider()
+                    }
 
-                if (showGps) {
-                    GpsSection(context, data)
+                    if (showGps) {
+                        GpsSection(context, data, dimmed = isStale)
+                    }
                 }
             }
         }
@@ -176,26 +206,36 @@ class GeoWidget : GlanceAppWidget() {
     @Composable
     private fun GpsSection(
         context: android.content.Context,
-        data: WidgetDataStore.Snapshot
+        data: WidgetDataStore.Snapshot,
+        dimmed: Boolean
     ) {
+        // The GPS line is carried forward from the last fix while the
+        // barometer self-refreshes each tick, so it can be arbitrarily
+        // old. Dim it once stale (parity with the iOS widget, which
+        // applies .opacity(0.4)). Glance has no opacity modifier, so we
+        // dim by darkening the row colors.
         Column(modifier = GlanceModifier.fillMaxWidth().padding(vertical = 6.dp)) {
             SectionLabel(context.getString(R.string.widget_section_gps))
             DataRow(
                 label = context.getString(R.string.widget_label_altitude),
-                value = "${String.format(Locale.US, "%.0f", data.gpsAltitude)} m"
+                value = "${String.format(Locale.US, "%.0f", data.gpsAltitude)} m",
+                dimmed = dimmed
             )
             val speed = maxOf(data.gpsSpeed, 0.0)
             DataRow(
                 label = context.getString(R.string.widget_label_speed),
-                value = "${String.format(Locale.US, "%.1f", speed * 3.6)} km/h"
+                value = "${String.format(Locale.US, "%.1f", speed * 3.6)} km/h",
+                dimmed = dimmed
             )
             DataRow(
                 label = context.getString(R.string.widget_label_lat),
-                value = "${String.format(Locale.US, "%.4f", data.gpsLat)}°"
+                value = "${String.format(Locale.US, "%.4f", data.gpsLat)}°",
+                dimmed = dimmed
             )
             DataRow(
                 label = context.getString(R.string.widget_label_lon),
-                value = "${String.format(Locale.US, "%.4f", data.gpsLon)}°"
+                value = "${String.format(Locale.US, "%.4f", data.gpsLon)}°",
+                dimmed = dimmed
             )
         }
     }
@@ -214,7 +254,7 @@ class GeoWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun DataRow(label: String, value: String) {
+    private fun DataRow(label: String, value: String, dimmed: Boolean = false) {
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.Vertical.CenterVertically
@@ -222,7 +262,9 @@ class GeoWidget : GlanceAppWidget() {
             Text(
                 if (label.isNotEmpty()) label else "",
                 style = TextStyle(
-                    color = androidx.glance.unit.ColorProvider(Color(0xFF888888)),
+                    color = androidx.glance.unit.ColorProvider(
+                        if (dimmed) Color(0xFF555555) else Color(0xFF888888)
+                    ),
                     fontSize = 9.sp
                 ),
                 modifier = GlanceModifier.width(52.dp)
@@ -231,7 +273,9 @@ class GeoWidget : GlanceAppWidget() {
             Text(
                 value,
                 style = TextStyle(
-                    color = androidx.glance.unit.ColorProvider(Color(0xFFFFFFFF)),
+                    color = androidx.glance.unit.ColorProvider(
+                        if (dimmed) Color(0xFF777777) else Color(0xFFFFFFFF)
+                    ),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
@@ -247,5 +291,24 @@ class GeoWidget : GlanceAppWidget() {
                 .height(1.dp)
                 .background(Color(0xFF333333))
         ) {}
+    }
+
+    /** Localized relative age label ("12 min. ago" / "3 hr. ago") used
+     *  in the header once the snapshot is stale, so a multi-hour-old
+     *  reading is not mistaken for current data. Uses the platform's
+     *  localized relative-time formatter (parity with iOS's
+     *  `Text(recordDate, style: .relative)`). */
+    private fun relativeAge(updatedAt: Long): String =
+        DateUtils.getRelativeTimeSpanString(
+            updatedAt,
+            System.currentTimeMillis(),
+            DateUtils.MINUTE_IN_MILLIS
+        ).toString()
+
+    companion object {
+        /** Shared staleness threshold (ms). Beyond this age the snapshot
+         *  is treated as stale. Kept in sync with the iOS widget
+         *  (30 min). */
+        private const val STALENESS_THRESHOLD_MS = 30L * 60L * 1000L
     }
 }
