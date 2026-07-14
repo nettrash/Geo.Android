@@ -509,11 +509,27 @@ class GeoViewModel @Inject constructor(
         }
     }
 
-    private fun addTrackingPoint(location: Location) {
+    /**
+     * Record one tracking sample. Each series is included only when it actually
+     * has data right now — a `null` becomes a NaN gap so that line breaks
+     * instead of collapsing to sea level:
+     *
+     *  - Barometer: only on devices that have the sensor (`available`).
+     *  - GPS: [location] is null when the fix is unusable (no fix / stale /
+     *    no altitude) — `LocationManager.usableGpsFix()` decides.
+     *
+     * So with no GPS the barometer line keeps tracking on its own, and on a
+     * device with no barometer only the GPS line is drawn.
+     */
+    private fun addTrackingPoint(location: Location?) {
+        val barometerHeight: Float? =
+            if (barometerManager.available) barometerManager.height.value.toFloat() else null
+        val gpsAltitude: Float? = location?.altitude?.toFloat()
+
         val (data, min, max) = historyRepository.addTrackingPoint(
             trackingMutableData,
-            barometerManager.height.value.toFloat(),
-            location.altitude.toFloat()
+            barometerHeight,
+            gpsAltitude
         )
         _trackingDataSet.value = data
         _trackingMin.value = min

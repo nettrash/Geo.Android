@@ -53,11 +53,28 @@ class LocationManager @Inject constructor(
     var onLocationUpdated: ((Location) -> Unit)? = null
 
     private var stepLocation: Location? = null
-    private var trackingStepLocation: Location? = null
+
+    /** True once the first real-time tracking sample has been recorded. Lets
+     *  [trackingRefresh] emit the first sample immediately, then throttle the
+     *  rest to [trackingStep]. Replaces the old `trackingStepLocation` seed
+     *  marker, which conflated "not started yet" with "no current GPS fix" and
+     *  so blocked barometer-only tracking when GPS was unavailable. */
+    private var trackingSeeded = false
+
     private val horizontalStep = 1000f // meters
     private val verticalStep = 50f // meters
     private var lastInfoTime = System.currentTimeMillis()
     private val trackingStep = 15_000L // 15 seconds
+
+    /** A GPS fix older than this is treated as "GPS unavailable" for the
+     *  real-time tracking chart: the barometer path fires every [trackingStep],
+     *  and if the last fix hasn't refreshed within this window the GPS series
+     *  records a gap rather than freezing at a stale altitude while the
+     *  barometer keeps moving. Well above the ~1 Hz cadence a live fix
+     *  delivers, so a working GPS is never mistaken for stale.
+     *  Mirrors iOS `Location.trackingGPSStaleness`. */
+    private val trackingGpsStaleness = 60_000L // 60 seconds
+
     var allowTracking = true
 
     // Dedicated calendar-day tracker for the daily-rollover history
@@ -75,7 +92,12 @@ class LocationManager @Inject constructor(
     private val pressureStep = 0.1 // kPa
 
     var onRecordHistory: ((Location) -> Unit)? = null
-    var onTrackingUpdate: ((Location) -> Unit)? = null
+
+    /** Emits one real-time tracking sample. The [Location] is NULLABLE: `null`
+     *  means "GPS is unavailable right now" (no fix / no altitude / stale), and
+     *  the consumer records a gap for the GPS series while still plotting the
+     *  barometer. See [trackingRefresh]. */
+    var onTrackingUpdate: ((Location?) -> Unit)? = null
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -107,7 +129,6 @@ class LocationManager @Inject constructor(
                 qnhRepository.maybeRefresh(loc)
                 onLocationUpdated?.invoke(loc)
 
-                val now = System.currentTimeMillis()
                 val today = currentDayKey()
                 val step = stepLocation
                 if (step != null) {
@@ -131,13 +152,10 @@ class LocationManager @Inject constructor(
                     onRecordHistory?.invoke(loc)
                 }
 
-                if (allowTracking) {
-                    if (trackingStepLocation == null || lastInfoTime + trackingStep <= now) {
-                        trackingStepLocation = Location(loc)
-                        lastInfoTime = now
-                        onTrackingUpdate?.invoke(loc)
-                    }
-                }
+                // `_location.value` is already the fresh fix (set above), so let
+                // the self-throttling recorder read it directly. It emits the
+                // first sample immediately, then honours `trackingStep`.
+                trackingRefresh()
             }
         }
     }
@@ -213,16 +231,49 @@ class LocationManager @Inject constructor(
             }
         }
 
-        if (allowTracking) {
-            _location.value?.let { loc ->
-                val now = System.currentTimeMillis()
-                if (lastInfoTime + trackingStep <= now) {
-                    trackingStepLocation = Location(loc)
-                    lastInfoTime = now
-                    onTrackingUpdate?.invoke(loc)
-                }
-            }
-        }
+        // Update tracking on every barometer reading (subject to the throttle),
+        // regardless of pressure step AND regardless of whether a GPS fix
+        // exists. This is what keeps the tracking chart's barometer series live
+        // when GPS is unavailable (indoors / denied / no fix yet) — with no
+        // usable fix the GPS series records a gap and only the barometer line
+        // is drawn. Previously this was inside a `_location.value?.let {}`, so
+        // with no fix the barometer never reached the chart at all.
+        trackingRefresh()
+    }
+
+    /**
+     * Emit one real-time tracking sample, subject to the [trackingStep]
+     * throttle. Driven by BOTH the GPS callback and [onBarometerUpdated], so
+     * the barometer series keeps updating even when GPS is unavailable.
+     *
+     * The GPS fix is passed only when it's currently usable — see [usableGpsFix];
+     * otherwise `null` records a gap so the GPS line breaks instead of freezing
+     * at a stale altitude while the barometer keeps moving.
+     *
+     * The first sample is emitted immediately; later ones honour the throttle.
+     * The shared [lastInfoTime] means the two paths cooperate — whichever fires
+     * in a given window emits one sample that reads both sensors at that
+     * instant. Mirrors iOS `Location.trackingRefresh()`.
+     */
+    private fun trackingRefresh() {
+        if (!allowTracking) return
+        val now = System.currentTimeMillis()
+        if (trackingSeeded && lastInfoTime + trackingStep > now) return
+        trackingSeeded = true
+        lastInfoTime = now
+        onTrackingUpdate?.invoke(usableGpsFix())
+    }
+
+    /**
+     * The current fix, or `null` when GPS is effectively unavailable for the
+     * tracking chart: no fix at all, a fix carrying no altitude, or a fix that
+     * has gone stale (see [trackingGpsStaleness]).
+     */
+    private fun usableGpsFix(): Location? {
+        val loc = _location.value ?: return null
+        if (!loc.hasAltitude()) return null
+        if (System.currentTimeMillis() - loc.time > trackingGpsStaleness) return null
+        return loc
     }
 
     private fun refreshClosestMountain(loc: Location) {

@@ -96,10 +96,22 @@ fun GeoGraphView(
                 if (data.size >= 2 && lineRange > 0) {
                     val path = Path()
                     val step = graphWidth / (data.size - 1).coerceAtLeast(1)
+                    // NaN = "no sample here": skip it and break the line, same
+                    // as the paired chart above.
+                    var needMove = true
                     data.forEachIndexed { idx, item ->
+                        if (!item.value.isFinite()) {
+                            needMove = true
+                            return@forEachIndexed
+                        }
                         val x = idx * step
                         val y = graphHeight * (1f - (item.value - min) / lineRange)
-                        if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        if (needMove) {
+                            path.moveTo(x, y)
+                            needMove = false
+                        } else {
+                            path.lineTo(x, y)
+                        }
                     }
                     drawPath(path, Color.White, style = Stroke(width = 2.dp.toPx()))
 
@@ -109,6 +121,7 @@ fun GeoGraphView(
                     // pixels = ⅔ dp, basically invisible.
                     val vertexRadius = 3.dp.toPx()
                     data.forEachIndexed { idx, item ->
+                        if (!item.value.isFinite()) return@forEachIndexed
                         val x = idx * step
                         val y = graphHeight * (1f - (item.value - min) / lineRange)
                         drawCircle(Color.White, radius = vertexRadius, center = Offset(x, y))
@@ -229,19 +242,38 @@ fun GeoGraphPointsView(
 
                     for (seriesIdx in 0 until numSeries) {
                         val color = if (seriesIdx < colors.size) colors[seriesIdx] else Color.White
+
+                        // Skip missing samples (NaN): leave a gap and start a
+                        // fresh subpath at the next finite sample, rather than
+                        // drawing a line straight across the hole. This lets a
+                        // series with no data (e.g. GPS altitude with no fix)
+                        // break cleanly while the other series keeps its line.
+                        // The x position is keyed off the slot index, so both
+                        // series stay column-aligned across gaps.
                         val path = Path()
+                        var needMove = true
                         data.forEachIndexed { idx, point ->
-                            val value = if (seriesIdx < point.values.size) point.values[seriesIdx] else 0f
+                            val value = point.values.getOrNull(seriesIdx) ?: Float.NaN
+                            if (!value.isFinite()) {
+                                needMove = true
+                                return@forEachIndexed
+                            }
                             val x = idx * step
                             val y = graphHeight * (1f - (value - min) / lineRange)
-                            if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                            if (needMove) {
+                                path.moveTo(x, y)
+                                needMove = false
+                            } else {
+                                path.lineTo(x, y)
+                            }
                         }
                         drawPath(path, color, style = Stroke(width = strokeWidth))
 
-                        // Vertices for this series — filled circles
-                        // in the same colour as the line.
+                        // Vertices for this series — filled circles in the same
+                        // colour as the line. Gaps get no dot.
                         data.forEachIndexed { idx, point ->
-                            val value = if (seriesIdx < point.values.size) point.values[seriesIdx] else 0f
+                            val value = point.values.getOrNull(seriesIdx) ?: Float.NaN
+                            if (!value.isFinite()) return@forEachIndexed
                             val x = idx * step
                             val y = graphHeight * (1f - (value - min) / lineRange)
                             drawCircle(color, radius = vertexRadius, center = Offset(x, y))
