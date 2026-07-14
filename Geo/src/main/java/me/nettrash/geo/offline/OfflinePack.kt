@@ -11,19 +11,19 @@ import me.nettrash.geo.util.AppLog
 import java.io.File
 
 /**
- * "Offline expedition pack" — a pre-cached area so the AR peaks + terrain
- * skyline keep working on a summit with no signal. Direct sibling of iOS
+ * "Offline expedition pack" — a pre-cached area so the AR peak markers keep
+ * working on a summit with no signal. Direct sibling of iOS
  * `Core/OfflinePack.swift`.
  *
- * Each pack bundles the area's OSM peaks and the skyline DEM (digital
- * elevation model) sampled from the pack centre, both pulled through the
- * same throttled public-API paths the live app uses.
+ * Packs are PEAKS ONLY (name, coordinate, altitude), pulled through the same
+ * throttled public-API path the live app uses. They used to also prefetch an
+ * area DEM grid to feed the terrain skyline; that skyline was removed, and the
+ * grid prefetch went with it.
  *
- * Storage is plain JSON files under `filesDir/offline_packs` (NOT Room):
- * the DEM blob is large and purely local, so there's no reason to put it
- * through a migration-bearing schema. A light `index.json` holds the
- * metadata the management UI lists; each pack's peaks + cells live in its
- * own `<id>.json` so the list never loads megabytes of terrain.
+ * Storage is plain JSON files under `filesDir/offline_packs` (NOT Room): the
+ * data is purely local and re-downloadable, so there's no reason to put it
+ * through a migration-bearing schema. A light `index.json` holds the metadata
+ * the management UI lists; each pack's peaks live in its own `<id>.json`.
  *
  * Map tiles are intentionally out of scope (Maps/MapKit licensing forbids
  * caching tiles) — this is "offline data & AR", not "offline map".
@@ -38,30 +38,20 @@ data class OfflinePack(
     val radiusKm: Double,
     val createdAt: Long,
     /** Named peaks cached for the area. */
-    val peakCount: Int,
-    /** ~110 m DEM grid cells cached for the centre's skyline panorama. */
-    val cellCount: Int,
-    /** Far-terrain ring cells (~550 m to 50 km + ~2.2 km to 200 km) that
-     *  let the offline skyline include distant ranges. `null` for packs
-     *  downloaded before the rings existed (they cover the core only). */
-    val ringCellCount: Int? = null
+    val peakCount: Int
 )
 
-/** The heavy payload for one pack, stored in `<id>.json`. */
+/**
+ * The payload for one pack, stored in `<id>.json`.
+ *
+ * Packs written by an older build also carry `cells` / `mediumCells` /
+ * `coarseCells` DEM blobs for the removed terrain skyline. The store decodes
+ * with `ignoreUnknownKeys = true`, so those keys are simply dropped and an
+ * existing pack keeps working as a peak-only pack — no migration needed.
+ */
 @Serializable
 data class OfflinePackData(
-    val peaks: List<PackPeak> = emptyList(),
-    /** Quantised grid cells (integer milli-degrees + elevation), shaped
-     *  exactly like the live elevation cache so they seed straight in as
-     *  pinned cells. */
-    val cells: List<ElevationCacheStore.Entry> = emptyList(),
-    /** Far-terrain ring layers, keyed by [me.nettrash.geo.ar.TerrainElevationService.mediumMilliDeg]
-     *  (~550 m cells to ~50 km) and [me.nettrash.geo.ar.TerrainElevationService.coarseMilliDeg]
-     *  (~2.2 km cells to ~200 km). Optional so pack files saved before the
-     *  rings existed still decode; the live lookup falls back
-     *  fine → medium → coarse on a miss. */
-    val mediumCells: List<ElevationCacheStore.Entry>? = null,
-    val coarseCells: List<ElevationCacheStore.Entry>? = null
+    val peaks: List<PackPeak> = emptyList()
 )
 
 @Serializable

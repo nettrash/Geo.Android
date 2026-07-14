@@ -29,8 +29,6 @@ import me.nettrash.geo.offline.OfflinePackRepository
 import java.util.Locale
 import me.nettrash.geo.data.repository.HistoryRepository
 import me.nettrash.geo.data.snapshot.SharedSnapshotStore
-import me.nettrash.geo.ar.ArOcclusionManager
-import me.nettrash.geo.ar.SkylineCalculator
 import me.nettrash.geo.location.LocationManager
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.sensor.DeviceMotionManager
@@ -57,13 +55,6 @@ class GeoViewModel @Inject constructor(
     private val mountainLoader: MountainLoader,
     private val peakFinder: PeakFinder,
     private val widgetUpdater: WidgetUpdater,
-    /** Exposed publicly so NatureScreen can render its `samples` and
-     *  `isComputing` StateFlows directly — keeps the heavy terrain
-     *  cache scoped to the application, not the ViewModel. */
-    val skylineCalculator: SkylineCalculator,
-    /** Exposed publicly so NatureScreen can feed targets in and
-     *  read back the occluded-ID set. */
-    val occlusionManager: ArOcclusionManager,
     private val offlinePackRepository: OfflinePackRepository
 ) : ViewModel() {
 

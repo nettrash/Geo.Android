@@ -342,7 +342,7 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 title = { Text(pack.name, color = Color.White) },
                 text = {
                     Text(
-                        "${pack.peakCount} peaks · ${pack.cellCount} cells · ${pack.radiusKm.toInt()} km",
+                        "${pack.peakCount} peaks · ${pack.radiusKm.toInt()} km",
                         color = Color.White.copy(alpha = 0.7f)
                     )
                 },

@@ -9,9 +9,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import me.nettrash.geo.ar.ElevationCacheStore
-import me.nettrash.geo.ar.SkylineCalculator
-import me.nettrash.geo.ar.TerrainElevationService
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.PeakFinder
 import java.util.Locale
@@ -20,23 +17,24 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Owns the offline-expedition-pack state and the seeding of prefetched
- * data back into the two live caches so the AR view works with no signal:
+ * Owns the offline-expedition-pack state and seeds the prefetched peaks back
+ * into [PeakFinder] (via [combinedPeaks]), so the AR view can still name the
+ * mountains around you on a summit with no signal.
  *
- *  • [PeakFinder] merges [combinedPeaks] (so named peaks / markers / ridge
- *    labels appear area-wide offline), and
- *  • [TerrainElevationService] pins the packs' DEM cells (so the terrain
- *    skyline resolves from cache instead of going empty offline).
+ * Packs are PEAKS ONLY. They used to also prefetch an area DEM grid (a ~110 m
+ * core plus far-terrain rings out to 200 km) to feed the terrain skyline; that
+ * skyline was removed — the modelled ridge rarely matched the real one on camera
+ * — and the grid prefetch went with it. Peak altitudes are still DEM-resolved at
+ * download time inside [PeakFinder.fetchPeaksForArea], one bounded lookup per
+ * peak.
  *
- * Download reuses the app's existing throttled, retry-backed public-API
- * paths ([PeakFinder.fetchPeaksForArea] / [TerrainElevationService]), so
- * the bounding-box prefetch is automatically polite to Overpass and
- * Open-Elevation. Sibling of iOS `Core/OfflinePackManager.swift`.
+ * Download reuses the app's existing throttled, retry-backed public-API path
+ * ([PeakFinder.fetchPeaksForArea]), so the bounding-box prefetch is automatically
+ * polite to Overpass. Sibling of iOS `Core/OfflinePackManager.swift`.
  */
 @Singleton
 class OfflinePackRepository @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val terrain: TerrainElevationService,
     private val peakFinder: PeakFinder
 ) {
 
@@ -88,42 +86,24 @@ class OfflinePackRepository @Inject constructor(
             // peaks while keeping far ones. Mirrors the live PeakFinder path.
             val peaks = osm.sortedBy { it.distance }.take(maxPackPeaks)
 
-            // 2. DEM in three layers, fetched in chunks so we can show
-            //    progress; each chunk goes through the elevation service's own
-            //    throttle + retry. Area grids (not a single-observer fan) are
-            //    what let the offline skyline resolve from *any* point in the
-            //    area, not only when standing at the pack centre:
-            //     • full-resolution ~110 m core (centre ± radius, budget-capped),
-            //     • ~550 m ring to 50 km and ~2.2 km ring to 200 km — the
-            //       skyline's full range, so distant mountain ranges stay in the
-            //       offline silhouette instead of silently vanishing past the core.
-            _statusText.value = "Caching terrain…"
-            val fineCoords = SkylineCalculator.offlinePrefetchCoordinates(centerLat, centerLon, radiusKm)
-            val mediumCoords = SkylineCalculator.offlineMediumPrefetchCoordinates(centerLat, centerLon)
-            val coarseCoords = SkylineCalculator.offlineCoarsePrefetchCoordinates(centerLat, centerLon)
-            val totalCount = fineCoords.size + mediumCoords.size + coarseCoords.size
-            var processed = 0
-            val onChunkDone: (Int) -> Unit = { n ->
-                processed += n
-                _progress.value = processed.toFloat() / totalCount
-            }
+            // Note: `fetchPeaksForArea` already resolves the altitude of every
+            // peak whose OSM node carries no `ele` tag, via one batched
+            // TerrainElevationService lookup — a bounded number of DEM points
+            // (one per peak) that MUST stay, because a peak with no altitude is
+            // dropped. What used to sit on top of that was an *area DEM grid*
+            // prefetch (a ~110 m core plus far-terrain rings out to 200 km, i.e.
+            // tens of thousands of Open-Elevation points) that existed solely to
+            // feed the terrain skyline. The skyline is gone, so the grid prefetch
+            // is too: packs are now just peaks, which makes them small and quick.
 
-            val cells = fetchLayer(fineCoords, { TerrainElevationService.milliDeg(it) }, onChunkDone)
-            _statusText.value = "Caching far terrain…"
-            val mediumCells = fetchLayer(mediumCoords, { TerrainElevationService.mediumMilliDeg(it) }, onChunkDone)
-            val coarseCells = fetchLayer(coarseCoords, { TerrainElevationService.coarseMilliDeg(it) }, onChunkDone)
-
-            // 3. Persist + register. Bail (without recording a metadata entry)
+            // 2. Persist + register. Bail (without recording a metadata entry)
             //    if the data file didn't actually persist — a failed write would
             //    otherwise leave a phantom pack that can never be re-seeded.
             val id = UUID.randomUUID().toString()
             val saved = store.saveData(
                 id,
                 OfflinePackData(
-                    peaks = peaks.map { PackPeak(it.name, it.latitude, it.longitude, it.altitude) },
-                    cells = cells,
-                    mediumCells = mediumCells,
-                    coarseCells = coarseCells
+                    peaks = peaks.map { PackPeak(it.name, it.latitude, it.longitude, it.altitude) }
                 )
             )
             if (!saved) return
@@ -132,8 +112,7 @@ class OfflinePackRepository @Inject constructor(
                 id = id, name = packName,
                 centerLat = centerLat, centerLon = centerLon,
                 radiusKm = radiusKm, createdAt = System.currentTimeMillis(),
-                peakCount = peaks.size, cellCount = cells.size,
-                ringCellCount = mediumCells.size + coarseCells.size
+                peakCount = peaks.size
             )
             store.saveIndex((listOf(meta) + _packs.value).sortedByDescending { it.createdAt })
             reseed()
@@ -168,84 +147,35 @@ class OfflinePackRepository @Inject constructor(
         }
     }
 
-    /** Fetch one layer's grid chunk-by-chunk, keying results with the
-     *  layer's own quantiser ([keyMilliDeg]) so they line up with the live
-     *  fallback lookups. [onChunkDone] reports each chunk's size so the
-     *  caller can publish combined progress across all three layers.
-     *  Mirrors iOS `createPack`'s `fetchLayer`. */
-    private suspend fun fetchLayer(
-        coords: List<Pair<Double, Double>>,
-        keyMilliDeg: (Double) -> Int,
-        onChunkDone: (Int) -> Unit
-    ): List<ElevationCacheStore.Entry> {
-        val cellMap = HashMap<Pair<Int, Int>, Double>()
-        val chunk = 300
-        var i = 0
-        while (i < coords.size) {
-            val end = minOf(i + chunk, coords.size)
-            val slice = coords.subList(i, end)
-            val elevs = terrain.elevations(slice)
-            for ((c, e) in slice.zip(elevs)) {
-                if (e != null) {
-                    cellMap[keyMilliDeg(c.first) to keyMilliDeg(c.second)] = e
-                }
-            }
-            onChunkDone(slice.size)
-            i = end
-        }
-        return cellMap.map { (k, v) -> ElevationCacheStore.Entry(k.first, k.second, v) }
-    }
-
-    /** Rebuild [combinedPeaks] and the elevation service's pinned cells from
-     *  every saved pack. Called at launch and after any pack change. */
+    /** Rebuild [combinedPeaks] from every saved pack. Called at launch and after
+     *  any pack change. */
     private suspend fun reseed() {
         val metas = store.loadIndex().sortedByDescending { it.createdAt }
         val datas = metas.mapNotNull { store.loadData(it.id) }
-        val seed = assembleSeed(datas)
-        terrain.setPinned(seed.cells, seed.mediumCells, seed.coarseCells)
         _packs.value = metas
-        _combinedPeaks.value = seed.peaks
+        _combinedPeaks.value = assembleSeed(datas)
     }
 
     private fun defaultName(lat: Double, lon: Double): String =
         String.format(Locale.US, "Area %.3f, %.3f", lat, lon)
 
     companion object {
-        /** Assembled live-cache seed: the fine DEM cells, the two
-         *  far-terrain ring layers and the deduped peaks. */
-        data class Seed(
-            val cells: List<ElevationCacheStore.Entry>,
-            val mediumCells: List<ElevationCacheStore.Entry>,
-            val coarseCells: List<ElevationCacheStore.Entry>,
-            val peaks: List<NearbyPeak>
-        )
-
         /**
-         * Pure assembly of the live-cache seed from loaded pack payloads: union
-         * each DEM layer (later packs win on a key collision — pre-ring packs
-         * simply contribute nothing to the ring layers) and dedupe peaks by
-         * their coordinate-derived id. Pure + side-effect-free so it's unit-
-         * testable without files or the Android context. Mirrors iOS
+         * Pure assembly of the live-cache seed from loaded pack payloads: dedupe
+         * peaks by their coordinate-derived id. Pure + side-effect-free so it's
+         * unit-testable without files or the Android context. Mirrors iOS
          * `OfflinePackManager.assembleSeed`.
          */
-        fun assembleSeed(datas: List<OfflinePackData>): Seed {
-            val cellMap = LinkedHashMap<Pair<Int, Int>, Double>()
-            val mediumMap = LinkedHashMap<Pair<Int, Int>, Double>()
-            val coarseMap = LinkedHashMap<Pair<Int, Int>, Double>()
+        fun assembleSeed(datas: List<OfflinePackData>): List<NearbyPeak> {
             val peaks = ArrayList<NearbyPeak>()
             val seen = HashSet<UUID>()
             for (data in datas) {
-                for (c in data.cells) cellMap[c.lat to c.lon] = c.elev
-                for (c in data.mediumCells.orEmpty()) mediumMap[c.lat to c.lon] = c.elev
-                for (c in data.coarseCells.orEmpty()) coarseMap[c.lat to c.lon] = c.elev
                 for (p in data.peaks) {
                     val np = NearbyPeak.create(p.name, p.lat, p.lon, p.altitude, 0.0, 0.0)
                     if (seen.add(np.id)) peaks.add(np)
                 }
             }
-            fun entries(m: Map<Pair<Int, Int>, Double>) =
-                m.map { (k, v) -> ElevationCacheStore.Entry(k.first, k.second, v) }
-            return Seed(entries(cellMap), entries(mediumMap), entries(coarseMap), peaks)
+            return peaks
         }
     }
 }

@@ -1,28 +1,21 @@
 package me.nettrash.geo.offline
 
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import me.nettrash.geo.ar.ElevationCacheStore
-import me.nettrash.geo.ar.SkylineCalculator
-import me.nettrash.geo.ar.TerrainElevationService
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
-import kotlin.math.abs
 
 /**
- * Tests for the offline-pack on-disk format, the seed-assembly
- * dedupe/union, and the far-terrain ring layers (prefetch lattices +
- * the pinned-ring fallback lookup). Sibling of iOS `OfflinePackTests`.
- * Robolectric only for the fallback test's `Context`; everything else
- * is pure.
+ * Tests for the offline-pack on-disk format and the seed-assembly dedupe.
+ * Sibling of iOS `OfflinePackTests`.
+ *
+ * Packs are PEAKS ONLY. The DEM-grid half (a ~110 m core plus far-terrain rings
+ * out to 200 km) existed to feed the terrain skyline; that skyline was removed
+ * from the Nature tab, so the grid prefetch, the pinned-cell seeding and their
+ * tests went with it. Peak altitudes are still DEM-resolved at download time
+ * inside `PeakFinder.fetchPeaksForArea` (one bounded lookup per peak).
  */
-@RunWith(RobolectricTestRunner::class)
 class OfflinePackAssemblyTest {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -30,141 +23,90 @@ class OfflinePackAssemblyTest {
     @Test
     fun packDataRoundTrips() {
         val data = OfflinePackData(
-            peaks = listOf(PackPeak("Rainier", 46.8523, -121.7603, 4392.0)),
-            cells = listOf(ElevationCacheStore.Entry(46852, -121760, 4392.0)),
-            mediumCells = listOf(ElevationCacheStore.Entry(46850, -121760, 4200.0)),
-            coarseCells = listOf(ElevationCacheStore.Entry(46860, -121760, 3900.0))
+            peaks = listOf(PackPeak("Rainier", 46.8523, -121.7603, 4392.0))
         )
         val decoded = json.decodeFromString<OfflinePackData>(json.encodeToString(data))
 
         assertEquals(1, decoded.peaks.size)
         assertEquals("Rainier", decoded.peaks[0].name)
-        assertEquals(1, decoded.cells.size)
-        assertEquals(4392.0, decoded.cells[0].elev, 0.0)
-        assertEquals(4200.0, decoded.mediumCells!![0].elev, 0.0)
-        assertEquals(3900.0, decoded.coarseCells!![0].elev, 0.0)
+        assertEquals(4392.0, decoded.peaks[0].altitude, 1e-9)
     }
 
-    /** A pack file saved before the far-terrain rings existed decodes fine —
-     *  the ring layers are simply absent, and seeding treats them as empty. */
+    /**
+     * A pack file written by an OLDER build still carries the skyline DEM blobs
+     * (`cells` / `mediumCells` / `coarseCells`). Those keys are no longer part of
+     * the model — `ignoreUnknownKeys` must drop them rather than fail — so an
+     * existing pack on a user's device keeps working as a peak-only pack without
+     * any migration.
+     */
     @Test
-    fun preRingPackDataStillDecodes() {
-        val legacy = """{"peaks":[],"cells":[{"lat":45000,"lon":7000,"elev":3000.0}]}"""
+    fun legacyPackWithDemBlobsStillDecodes() {
+        val legacy = """
+            {"peaks":[{"name":"Mont Blanc","lat":45.8326,"lon":6.8652,"altitude":4808.0}],
+             "cells":[{"lat":45000,"lon":7000,"elev":3000.0}],
+             "mediumCells":[{"lat":45000,"lon":7000,"elev":2900.0}],
+             "coarseCells":[{"lat":44980,"lon":7020,"elev":2800.0}]}
+        """.trimIndent()
         val decoded = json.decodeFromString<OfflinePackData>(legacy)
-        assertEquals(1, decoded.cells.size)
-        assertNull(decoded.mediumCells)
-        assertNull(decoded.coarseCells)
+
+        assertEquals(1, decoded.peaks.size)
+        assertEquals("Mont Blanc", decoded.peaks[0].name)
+
+        // And it still seeds PeakFinder.
         val seed = OfflinePackRepository.assembleSeed(listOf(decoded))
-        assertEquals(0, seed.mediumCells.size)
-        assertEquals(0, seed.coarseCells.size)
+        assertEquals(1, seed.size)
+        assertEquals("Mont Blanc", seed[0].name)
+    }
+
+    /**
+     * Likewise for the index: an entry written with the old `cellCount` /
+     * `ringCellCount` counters decodes into the slimmed metadata.
+     */
+    @Test
+    fun legacyIndexEntryWithCellCountsStillDecodes() {
+        val legacy = """
+            [{"id":"abc","name":"Rainier area","centerLat":46.85,"centerLon":-121.76,
+              "radiusKm":25.0,"createdAt":700000000,"peakCount":3,
+              "cellCount":3600,"ringCellCount":12000}]
+        """.trimIndent()
+        val decoded = json.decodeFromString<List<OfflinePack>>(legacy)
+
+        assertEquals(1, decoded.size)
+        assertEquals("Rainier area", decoded[0].name)
+        assertEquals(3, decoded[0].peakCount)
     }
 
     @Test
-    fun assembleSeedDedupesPeaksAndUnionsCells() {
+    fun indexRoundTrips() {
+        val meta = OfflinePack(
+            id = "abc", name = "Rainier area",
+            centerLat = 46.85, centerLon = -121.76,
+            radiusKm = 25.0, createdAt = 700_000_000L, peakCount = 3
+        )
+        val decoded = json.decodeFromString<List<OfflinePack>>(json.encodeToString(listOf(meta)))
+        assertEquals(listOf(meta), decoded)
+    }
+
+    /**
+     * Two packs that share a peak coordinate collapse to a single peak — the id
+     * is derived from the coordinate, so the union across packs is deduped.
+     */
+    @Test
+    fun assembleSeedDedupesPeaks() {
         val shared = PackPeak("Shared", 45.0, 7.0, 3000.0)
-        val packA = OfflinePackData(
-            peaks = listOf(shared, PackPeak("OnlyA", 45.1, 7.1, 2500.0)),
-            cells = listOf(
-                ElevationCacheStore.Entry(45000, 7000, 3000.0),
-                ElevationCacheStore.Entry(45100, 7100, 2500.0)
-            ),
-            mediumCells = listOf(ElevationCacheStore.Entry(45000, 7000, 2900.0)),
-            coarseCells = null
-        )
-        val packB = OfflinePackData(
-            peaks = listOf(shared, PackPeak("OnlyB", 46.0, 8.0, 4000.0)),
-            cells = listOf(
-                ElevationCacheStore.Entry(46000, 8000, 4000.0),
-                ElevationCacheStore.Entry(45000, 7000, 3100.0) // collides with packA
-            ),
-            mediumCells = listOf(ElevationCacheStore.Entry(45000, 7000, 3050.0)), // collides with packA's ring
-            coarseCells = listOf(ElevationCacheStore.Entry(44980, 7020, 2800.0))
-        )
+        val packA = OfflinePackData(peaks = listOf(shared, PackPeak("OnlyA", 45.1, 7.1, 2500.0)))
+        val packB = OfflinePackData(peaks = listOf(shared, PackPeak("OnlyB", 46.0, 8.0, 4000.0)))
 
         val seed = OfflinePackRepository.assembleSeed(listOf(packA, packB))
 
-        // Peaks: the shared coordinate collapses to one → 3 unique.
-        assertEquals(3, seed.peaks.size)
-        assertEquals(1, seed.peaks.count { it.name == "Shared" })
-
-        // Cells: 3 distinct keys; the colliding key takes the later pack's value.
-        assertEquals(3, seed.cells.size)
-        val collided = seed.cells.first { it.lat == 45000 && it.lon == 7000 }
-        assertEquals(3100.0, collided.elev, 0.0)
-
-        // Ring layers union the same way, later pack winning; a null layer
-        // contributes nothing.
-        assertEquals(1, seed.mediumCells.size)
-        assertEquals(3050.0, seed.mediumCells.first { it.lat == 45000 && it.lon == 7000 }.elev, 0.0)
-        assertEquals(1, seed.coarseCells.size)
+        assertEquals(3, seed.size)                                   // shared appears once
+        assertEquals(1, seed.count { it.name == "Shared" })
+        assertTrue(seed.any { it.name == "OnlyA" })
+        assertTrue(seed.any { it.name == "OnlyB" })
     }
 
     @Test
     fun assembleSeedEmptyIsEmpty() {
-        val seed = OfflinePackRepository.assembleSeed(emptyList())
-        assertEquals(0, seed.cells.size)
-        assertEquals(0, seed.mediumCells.size)
-        assertEquals(0, seed.coarseCells.size)
-        assertEquals(0, seed.peaks.size)
-    }
-
-    // ─── Far-terrain ring layers ───────────────────────────────────
-
-    @Test
-    fun ringGridsSnapToTheirOwnLattices() {
-        val medium = SkylineCalculator.offlineMediumPrefetchCoordinates(47.1234, 8.5678)
-        val coarse = SkylineCalculator.offlineCoarsePrefetchCoordinates(47.1234, 8.5678)
-        assertTrue(medium.isNotEmpty())
-        assertTrue(coarse.isNotEmpty())
-        assertTrue(medium.size <= SkylineCalculator.OFFLINE_MAX_RING_CELLS)
-        assertTrue(coarse.size <= SkylineCalculator.OFFLINE_MAX_RING_CELLS)
-        // Every node keys to a distinct cell of its own layer — the exact
-        // property the live fallback lookup depends on (no phase drift,
-        // no duplicate keys, no gaps).
-        val mediumKeys = medium.map {
-            TerrainElevationService.mediumMilliDeg(it.first) to
-                TerrainElevationService.mediumMilliDeg(it.second)
-        }.toSet()
-        assertEquals(medium.size, mediumKeys.size)
-        val coarseKeys = coarse.map {
-            TerrainElevationService.coarseMilliDeg(it.first) to
-                TerrainElevationService.coarseMilliDeg(it.second)
-        }.toSet()
-        assertEquals(coarse.size, coarseKeys.size)
-    }
-
-    @Test
-    fun coarseRingReachesTheSkylineRange() {
-        // The coarse ring must reach (nearly) the 200 km skyline range —
-        // that's the whole point of the layer: distant mountain ranges
-        // staying in the offline silhouette.
-        val coarse = SkylineCalculator.offlineCoarsePrefetchCoordinates(47.0, 8.0)
-        val maxLatSpanMeters = coarse.maxOf { abs(it.first - 47.0) * 111_320.0 }
-        assertTrue(maxLatSpanMeters > 150_000.0)
-    }
-
-    @Test
-    fun pinnedRingFallbackResolvesWithoutNetwork() = runBlocking {
-        val service = TerrainElevationService(RuntimeEnvironment.getApplication())
-        service.clearCache()
-        // Pin ONLY a coarse cell; query a nearby point that misses the fine
-        // and medium layers. It must resolve through the coarse fallback —
-        // and because everything resolves from pinned data, no network
-        // request is ever attempted (the whole offline promise).
-        val lat = 45.003
-        val lon = 7.006
-        service.setPinned(
-            fine = emptyList(),
-            medium = emptyList(),
-            coarse = listOf(
-                ElevationCacheStore.Entry(
-                    TerrainElevationService.coarseMilliDeg(lat),
-                    TerrainElevationService.coarseMilliDeg(lon),
-                    1234.0
-                )
-            )
-        )
-        val result = service.elevations(listOf(lat to lon))
-        assertEquals(listOf(1234.0), result)
+        assertTrue(OfflinePackRepository.assembleSeed(emptyList()).isEmpty())
     }
 }
