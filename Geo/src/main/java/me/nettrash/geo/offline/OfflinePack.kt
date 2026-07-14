@@ -40,7 +40,11 @@ data class OfflinePack(
     /** Named peaks cached for the area. */
     val peakCount: Int,
     /** ~110 m DEM grid cells cached for the centre's skyline panorama. */
-    val cellCount: Int
+    val cellCount: Int,
+    /** Far-terrain ring cells (~550 m to 50 km + ~2.2 km to 200 km) that
+     *  let the offline skyline include distant ranges. `null` for packs
+     *  downloaded before the rings existed (they cover the core only). */
+    val ringCellCount: Int? = null
 )
 
 /** The heavy payload for one pack, stored in `<id>.json`. */
@@ -50,7 +54,14 @@ data class OfflinePackData(
     /** Quantised grid cells (integer milli-degrees + elevation), shaped
      *  exactly like the live elevation cache so they seed straight in as
      *  pinned cells. */
-    val cells: List<ElevationCacheStore.Entry> = emptyList()
+    val cells: List<ElevationCacheStore.Entry> = emptyList(),
+    /** Far-terrain ring layers, keyed by [me.nettrash.geo.ar.TerrainElevationService.mediumMilliDeg]
+     *  (~550 m cells to ~50 km) and [me.nettrash.geo.ar.TerrainElevationService.coarseMilliDeg]
+     *  (~2.2 km cells to ~200 km). Optional so pack files saved before the
+     *  rings existed still decode; the live lookup falls back
+     *  fine → medium → coarse on a miss. */
+    val mediumCells: List<ElevationCacheStore.Entry>? = null,
+    val coarseCells: List<ElevationCacheStore.Entry>? = null
 )
 
 @Serializable

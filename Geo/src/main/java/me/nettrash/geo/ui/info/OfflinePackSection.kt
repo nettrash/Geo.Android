@@ -206,7 +206,9 @@ private fun OfflinePackManagerDialog(
                         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                             Text(pack.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "${pack.peakCount} peaks · ${pack.cellCount} cells · ${pack.radiusKm.toInt()} km",
+                                // Core + far-terrain ring cells; pre-ring packs have
+                                // no ringCellCount and show the core count alone.
+                                "${pack.peakCount} peaks · ${pack.cellCount + (pack.ringCellCount ?: 0)} cells · ${pack.radiusKm.toInt()} km",
                                 color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp
                             )
                             Text(

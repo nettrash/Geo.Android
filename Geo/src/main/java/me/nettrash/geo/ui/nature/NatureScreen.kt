@@ -16,6 +16,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.Button
@@ -100,6 +102,7 @@ import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.ui.GeoViewModel
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.abs
 import kotlin.math.hypot
 
 @Composable
@@ -233,10 +236,18 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 val outdoorByPeaks = distantPeakCount >= 3
                 viewModel.occlusionManager.setOutdoor(outdoorByAccuracy || outdoorByPeaks)
 
+                // Origin altitude is the SAME effective observer altitude the
+                // skyline and the marker overlay use (the DEM-anchored value
+                // the skyline was computed with, else baro>0, else GPS), so
+                // the occlusion test agrees with where markers are drawn.
+                // Mirrors iOS `updateOcclusionTargets`.
+                val originAlt = viewModel.skylineCalculator.observerAltitudeUsed.value
+                    ?: viewModel.barometerManager.height.value.takeIf { it > 0 }
+                    ?: loc.altitude
                 val targets = buildList {
                     for (peak in currentPeaks) {
                         val enu = GeoCalculations.gpsToENU(
-                            loc.latitude, loc.longitude, loc.altitude,
+                            loc.latitude, loc.longitude, originAlt,
                             peak.latitude, peak.longitude, peak.altitude
                         )
                         controller.cameraPosition.value?.let { cam ->
@@ -317,16 +328,27 @@ private fun ArScene(
     val distanceSource by controller.distanceSource.collectAsState()
     val skyline by viewModel.skylineCalculator.samples.collectAsState()
     val isSkylineComputing by viewModel.skylineCalculator.isComputing.collectAsState()
+    // Manual compass-alignment offset (session-only, lives on the controller so
+    // the projection choke point and every consumer shift coherently).
+    val userAlignmentDeg by controller.userAlignmentDeg.collectAsState()
     val barometerHeight by viewModel.barometerManager.height.collectAsState()
     val occludedIds by viewModel.occlusionManager.occludedIds.collectAsState()
     val isDepthSupported by controller.isDepthSupported.collectAsState()
     val isSceneReady by viewModel.occlusionManager.isSceneReady.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
 
-    // Observer eye altitude — barometer (already pre-filtered to > 0) preferred,
-    // else GPS. No clamp to >= 0 (below-sea-level observers are real). Shared by
-    // the welded-peak filter and the tap hit-test so both agree with the overlay.
-    val observerAlt = if (barometerHeight > 0) barometerHeight else (location?.altitude ?: 0.0)
+    // ONE source of truth for the observer altitude across every AR consumer:
+    // the DEM-anchored value the skyline was computed with
+    // (SkylineCalculator.observerAltitudeUsed), falling back to the
+    // baro-preferred / GPS sensor expression until the first skyline pass
+    // publishes it. Threaded into the welded-pill selection, the tap
+    // hit-tests, the AR marker projection and the occlusion targets so none
+    // of them can vertically detach from the drawn silhouette. No clamp to
+    // >= 0 (below-sea-level observers are real). Mirrors iOS
+    // `GeoNatureView.effectiveObserverAltitude`.
+    val skylineObserverAlt by viewModel.skylineCalculator.observerAltitudeUsed.collectAsState()
+    val observerAlt = skylineObserverAlt
+        ?: if (barometerHeight > 0) barometerHeight else (location?.altitude ?: 0.0)
 
     // True-north alignment: ARCore's world frame isn't north-aligned, so feed the
     // controller the device's TRUE compass heading (magnetic azimuth corrected by
@@ -378,7 +400,7 @@ private fun ArScene(
     // here, and a peak dropped from the welded labels (de-collision / heading
     // window / cap) is hidden rather than falling back to a flat, unrotated,
     // leaderless marker that wouldn't match the welded pills.
-    val weldedPeakIds = remember(peaks, skyline, location, barometerHeight) {
+    val weldedPeakIds = remember(peaks, skyline, location, observerAlt) {
         if (location == null || skyline.isEmpty()) {
             emptySet()
         } else {
@@ -461,6 +483,7 @@ private fun ArScene(
                     controller = controller,
                     userLocation = location,
                     barometerAltitude = barometerHeight.takeIf { it > 0 },
+                    observerAltitudeUsed = skylineObserverAlt,
                     skyline = skyline,
                     peaks = peaks
                 )
@@ -481,6 +504,7 @@ private fun ArScene(
                 ProjectedOverlay(
                     controller = controller,
                     userLocation = location,
+                    observerAltitude = observerAlt,
                     peaks = peaks.filterNot {
                         it.id in occludedIds ||
                             it.id in weldedPeakIds ||   // labelled on the ridge instead
@@ -491,11 +515,20 @@ private fun ArScene(
             }
         }
 
-        // Tap-to-identify: a tap runs a screen-space nearest-marker hit-test
-        // (same projection + occlusion/near filters as ProjectedOverlay) and
-        // opens the detail sheet. Only active once tracking — never over the
-        // pre-tracking BearingWindow fallback. Below the top bar so its
-        // long-press-for-diagnostics keeps working.
+        // Tap/pan-catch layer: a tap runs a screen-space nearest-marker
+        // hit-test (same projection + occlusion/near filters as
+        // ProjectedOverlay) and opens the detail sheet; a horizontal PAN
+        // adjusts the manual compass alignment live. Only active once
+        // tracking — never over the pre-tracking BearingWindow fallback.
+        // Below the top bar so its long-press-for-diagnostics keeps working.
+        //
+        // Gesture composition (mirrors iOS `onTapGesture` + a
+        // `DragGesture(minimumDistance: 12)`): the two detectors live in
+        // separate pointerInput modifiers. The drag detector only activates
+        // after horizontal touch slop, so a tap never reaches it and
+        // tap-to-identify keeps working unchanged; once the slop is crossed
+        // the drag consumes its position changes, which cancels the tap
+        // detector for that gesture.
         if (location != null && isTracking) {
             Box(
                 modifier = Modifier
@@ -511,6 +544,35 @@ private fun ArScene(
                                 skyline, weldedPeakIds, observerAlt, leaderPx, minSpacingPx
                             )?.let { selectedMarker = it }
                         }
+                    }
+                    .pointerInput(Unit) {
+                        val pxPerDp = this.density
+                        var baseDeg = 0.0
+                        var totalPx = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                // Latch the offset at pan start; every event
+                                // recomputes from base + TOTAL translation
+                                // (pure, clamped ±30°) — no compounding.
+                                baseDeg = controller.userAlignmentDeg.value.toDouble()
+                                totalPx = 0f
+                            },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                totalPx += dragAmount
+                                // px → dp so the 8-per-degree feel matches iOS
+                                // points physically at every screen density.
+                                // Drag right → offset up → overlay moves right,
+                                // following the finger (see
+                                // ArSceneController.userAlignmentDeg).
+                                controller.setUserAlignment(
+                                    alignmentOffsetDegrees(
+                                        base = baseDeg,
+                                        panTranslationDp = (totalPx / pxPerDp).toDouble()
+                                    ).toFloat()
+                                )
+                            }
+                        )
                     }
             )
         }
@@ -700,12 +762,80 @@ private fun ArScene(
             }
         }
 
+        // Manual compass-alignment chip — visible while an alignment offset
+        // is applied (≥0.5°, i.e. would display as ≥1°). Unobtrusive, matches
+        // the screen's pill styling; tapping it (✕) resets the offset.
+        // Session-only state — deliberately never persisted, compass error
+        // differs every session. Mirrors iOS.
+        if (abs(userAlignmentDeg) >= 0.5f) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 52.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .clickable { controller.setUserAlignment(0f) }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "⇄",
+                    color = Color(0xFFFF9800),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    String.format(Locale.US, "Alignment %+.0f°", userAlignmentDeg),
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(Modifier.width(5.dp))
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Reset compass alignment",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+
         // Tap-to-identify detail sheet.
         selectedMarker?.let { sel ->
             MarkerDetailSheet(selection = sel, onDismiss = { selectedMarker = null })
         }
     }
 }
+
+/** Pan sensitivity of the manual compass alignment: horizontal drag distance
+ *  (dp — the same physical unit as iOS points) per degree of offset. 8 dp/°
+ *  turns a typical 5–15° compass error into a comfortable 40–120 dp swipe,
+ *  precise enough to line a distant summit up with its drawn silhouette
+ *  without overshooting. Mirrors iOS `alignmentPanPointsPerDegree`. */
+const val ALIGNMENT_PAN_DP_PER_DEGREE = 8.0
+
+/** Hard clamp on the total manual alignment. Compass error is realistically
+ *  5–15°; ±30° is generous headroom while preventing an accidental swipe
+ *  from spinning the panorama into nonsense. Mirrors iOS
+ *  `alignmentMaxOffsetDeg`. */
+const val ALIGNMENT_MAX_OFFSET_DEG = 30.0
+
+/**
+ * Pure pan→alignment conversion: the new alignment offset (degrees) produced
+ * by a pan whose TOTAL horizontal translation is [panTranslationDp] dp,
+ * starting from [base] degrees.
+ *
+ * SIGN: a drag RIGHT (positive translation) increases the offset, which the
+ * projection choke point turns into a clockwise bearing rotation of all
+ * drawn content — i.e. the overlay moves RIGHT, following the finger (see
+ * `ArSceneController.userAlignmentDeg` for the full derivation). The result
+ * is clamped to ±[ALIGNMENT_MAX_OFFSET_DEG]. Mirrors iOS
+ * `alignmentOffsetDegrees`.
+ */
+fun alignmentOffsetDegrees(base: Double, panTranslationDp: Double): Double =
+    (base + panTranslationDp / ALIGNMENT_PAN_DP_PER_DEGREE)
+        .coerceIn(-ALIGNMENT_MAX_OFFSET_DEG, ALIGNMENT_MAX_OFFSET_DEG)
 
 /**
  * Screen-space nearest-marker hit-test for tap-to-identify. Recomputes each
@@ -753,7 +883,10 @@ private fun nearestMarker(
     if (view != null && viewport != null) {
         val drawn = weldedPeakLabels(
             controller, peaks, skyline, observerAlt,
-            cameraHeadingDeg(view) + controller.frameYawOffsetDeg, viewport, minSpacingPx
+            // CONTENT heading (composed yaw = true-north fix − manual
+            // alignment): the same window centre the overlay welded with,
+            // so the hit-test tests exactly the labels the overlay drew.
+            cameraHeadingDeg(view) + controller.appliedYawOffsetDeg, viewport, minSpacingPx
         )
         for (label in drawn) {
             val target = Offset(label.pos.x, label.pos.y - leaderPx)
@@ -768,8 +901,11 @@ private fun nearestMarker(
     for (peak in peaks) {
         if (peak.id in weldedPeakIds) continue
         if (!visible(peak.id, peak.distance)) continue
+        // Same unified observer altitude as ProjectedOverlay's projection,
+        // so the hit-test agrees with what's drawn.
         val off = ArProjection.projectGps(
-            controller, userLocation, peak.latitude, peak.longitude, peak.altitude
+            controller, userLocation, peak.latitude, peak.longitude, peak.altitude,
+            observerAltitude = observerAlt
         ) ?: continue
         val d = centerDist(peak.id, off)
         if (d <= bestDist) { bestDist = d; best = ArMarkerSelection.Peak(peak) }
@@ -785,6 +921,9 @@ private fun nearestMarker(
 private fun ProjectedOverlay(
     controller: ArSceneController,
     userLocation: android.location.Location,
+    /** Unified observer altitude (DEM-anchored skyline value, else baro,
+     *  else GPS) — see `ArScene.observerAlt`. */
+    observerAltitude: Double,
     peaks: List<NearbyPeak>,
     onMarkerSized: (UUID, IntSize) -> Unit = { _, _ -> }
 ) {
@@ -806,7 +945,8 @@ private fun ProjectedOverlay(
                     userLocation = userLocation,
                     targetLat = peak.latitude,
                     targetLon = peak.longitude,
-                    targetAlt = peak.altitude
+                    targetAlt = peak.altitude,
+                    observerAltitude = observerAltitude
                 )
                 if (off != null) {
                     val opacity = (1.0 - (peak.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()

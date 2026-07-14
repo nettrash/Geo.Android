@@ -49,10 +49,15 @@ class TerrainElevationService @Inject constructor(
 
     private data class GridKey(val lat: Int, val lon: Int)
 
-    /** Largest number of grid cells kept in memory and on disk.
-     *  At ~110 m spacing this covers a wide area while bounding the
-     *  cache file; the least-recently-used cells are evicted first. */
-    private val maxCacheEntries = 8000
+    /** Largest number of grid cells kept in memory and on disk; the
+     *  least-recently-used cells are evicted first. Each entry is a
+     *  ~110 m grid cell at ~24 bytes on disk, so even 50 000 entries is
+     *  ~1.2 MB. The cap must comfortably hold several full skyline
+     *  passes: one pass is now ~8 500 distinct cells (dense schedule +
+     *  refinement round), and a cap smaller than a few passes would
+     *  make the LRU evict its own working set — every recompute would
+     *  re-fetch everything. Mirrors iOS `cacheCap`. */
+    private val maxCacheEntries = 50_000
 
     /** Cache. Guarded by [cacheLock] because skyline computation
      *  fans out async tasks that share the same instance.
@@ -74,6 +79,18 @@ class TerrainElevationService @Inject constructor(
      *  memory is bounded because each pack caps its cell count at
      *  [SkylineCalculator.OFFLINE_MAX_DEM_CELLS] (≈ cap × number of packs). */
     @Volatile private var pinned: Map<GridKey, Double> = emptyMap()
+
+    /** Coarser pinned layers from the packs' far-terrain rings. The fine
+     *  ~110 m core only reaches ~10 km, but the skyline looks out to
+     *  200 km — without these rings every offline sample past the core
+     *  resolved to null and distant ranges silently vanished from the
+     *  silhouette. A miss on the fine layers falls back to the ~550 m
+     *  ring, then the ~2.2 km ring; that matches the skyline fan's own
+     *  angular resolution (2° of bearing ≈ 3.5 % of distance laterally),
+     *  so the coarse far-field costs no visible fidelity. Mirrors iOS
+     *  `pinnedMedium` / `pinnedCoarse`. */
+    @Volatile private var pinnedMedium: Map<GridKey, Double> = emptyMap()
+    @Volatile private var pinnedCoarse: Map<GridKey, Double> = emptyMap()
 
     /** Durable backing for [cache] so terrain elevations survive process
      *  death and offline sessions. */
@@ -132,8 +149,13 @@ class TerrainElevationService @Inject constructor(
                 if (cached != null) {
                     results[i] = cached
                 } else {
-                    // Offline-pack cell — durable, never LRU-evicted.
+                    // Offline-pack cell — durable, never LRU-evicted. A miss
+                    // on the fine layers falls back to the packs' far-terrain
+                    // rings: the ~550 m cells (to ~50 km from a pack), then
+                    // the ~2.2 km cells (to ~200 km).
                     val pin = pinned[key]
+                        ?: pinnedMedium[GridKey(mediumMilliDeg(p.first), mediumMilliDeg(p.second))]
+                        ?: pinnedCoarse[GridKey(coarseMilliDeg(p.first), coarseMilliDeg(p.second))]
                     if (pin != null) results[i] = pin else pending.add(i to key)
                 }
             }
@@ -181,11 +203,21 @@ class TerrainElevationService @Inject constructor(
         store.save(emptyList())
     }
 
-    /** Replace the *pinned* offline-pack cells (consulted on every cache
-     *  miss, never evicted). Rebuilt wholesale by `OfflinePackRepository`,
-     *  so passing the union of all packs' cells is the whole contract. */
-    fun setPinned(cells: List<ElevationCacheStore.Entry>) {
-        pinned = cells.associate { GridKey(it.lat, it.lon) to it.elev }
+    /** Replace the sets of *pinned* offline-pack cells (consulted on every
+     *  cache miss, never evicted) — the fine ~110 m core plus the two
+     *  far-terrain ring layers ([fine] entries are integer milli-degrees;
+     *  [medium]/[coarse] are keyed by [mediumMilliDeg]/[coarseMilliDeg]).
+     *  Rebuilt wholesale by `OfflinePackRepository`, so passing the union
+     *  of all packs' layers is the whole contract. Mirrors iOS
+     *  `setPinned(fine:medium:coarse:)`. */
+    fun setPinned(
+        fine: List<ElevationCacheStore.Entry>,
+        medium: List<ElevationCacheStore.Entry> = emptyList(),
+        coarse: List<ElevationCacheStore.Entry> = emptyList()
+    ) {
+        pinned = fine.associate { GridKey(it.lat, it.lon) to it.elev }
+        pinnedMedium = medium.associate { GridKey(it.lat, it.lon) to it.elev }
+        pinnedCoarse = coarse.associate { GridKey(it.lat, it.lon) to it.elev }
     }
 
     /** Snapshot the cache (under the lock) in LRU order and persist it.
@@ -267,6 +299,37 @@ class TerrainElevationService @Inject constructor(
          *  the in-memory `GridKey` form. Exposed so `OfflinePackRepository`
          *  builds pinned-cell keys that line up with live lookups. */
         fun milliDeg(value: Double): Int = Math.round(value * 1000.0).toInt()
+
+        // ─── Far-terrain ring layers ──────────────────────────────
+
+        /** Grid steps of the packs' far-terrain ring layers. Key safety is
+         *  the same trick the fine grid relies on: every producer and every
+         *  consumer keys through the SAME `round(value / step)` expression
+         *  (scaled back to integer milli-degrees, see [stepMilliDeg]), so
+         *  any two coordinates in one cell reduce to the same integer key.
+         *  Mirrors iOS `mediumStepDeg` / `coarseStepDeg`. */
+        const val MEDIUM_STEP_DEG = 0.005   // ~550 m cells
+        const val COARSE_STEP_DEG = 0.02    // ~2.2 km cells
+
+        /** Pinned-layer key component for the ~550 m ring, in integer
+         *  milli-degrees (always a multiple of 5). */
+        fun mediumMilliDeg(value: Double): Int = stepMilliDeg(value, MEDIUM_STEP_DEG)
+
+        /** Pinned-layer key component for the ~2.2 km ring, in integer
+         *  milli-degrees (always a multiple of 20). */
+        fun coarseMilliDeg(value: Double): Int = stepMilliDeg(value, COARSE_STEP_DEG)
+
+        /** Snap a coordinate component to a `stepDeg` lattice and express
+         *  the cell as integer milli-degrees — the shared quantiser every
+         *  ring producer (pack prefetch) and consumer (live fallback
+         *  lookup) must go through. Integer arithmetic after the single
+         *  `round` keeps the key immune to Double representation drift.
+         *  The Android integer-key equivalent of iOS's
+         *  `(value / step).rounded() * step` string keys. */
+        private fun stepMilliDeg(value: Double, stepDeg: Double): Int {
+            val stepMilli = Math.round(stepDeg * 1000.0).toInt()   // 5 or 20
+            return Math.round(value / stepDeg).toInt() * stepMilli
+        }
     }
 }
 

@@ -159,7 +159,11 @@ class ArOcclusionManager @Inject constructor() {
         // otherwise mix matrices from different frames (a torn read).
         val viewMat = controller.viewMatrix.value
         val projMat = controller.projectionMatrix.value
-        val yawDeg = controller.frameYawOffsetDeg
+        // Composed yaw (true-north fix minus the manual alignment knob) — the
+        // SAME rotation the render path applies, so the occlusion test agrees
+        // with where markers are actually drawn while the user drags the
+        // panorama into alignment.
+        val yawDeg = controller.appliedYawOffsetDeg
 
         // Scene-ready signal: as soon as ARCore gives us a vertical
         // plane or a depth frame, the scene can occlude near markers,

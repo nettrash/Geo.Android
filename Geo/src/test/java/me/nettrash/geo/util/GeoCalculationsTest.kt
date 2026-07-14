@@ -1,6 +1,7 @@
 package me.nettrash.geo.util
 
 import com.google.common.truth.Truth.assertThat
+import me.nettrash.geo.ui.nature.alignmentOffsetDegrees
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -103,9 +104,12 @@ class GeoCalculationsTest {
             0.0, 0.0, 0.0,
             0.0, 0.09, 0.0  // ~10.02 km east at the equator
         )
-        // Curvature drop at ~10 km ≈ d² / (2R) ≈ 10000² / 12_742_000 ≈ 7.85 m.
+        // gpsToENU's default radius folds in standard refraction (it feeds AR
+        // sight-lines that must agree with the skyline), so the drop at ~10 km
+        // is d² / (2·R_eff) ≈ 10019² / 14_647_000 ≈ 6.85 m — not the
+        // un-refracted 7.85 m.
         assertThat(enu.up).isLessThan(0.0)
-        assertThat(enu.up).isWithin(2.0).of(-7.85)
+        assertThat(enu.up).isWithin(2.0).of(-6.85)
     }
 
     @Test fun gpsToENUSkipsCurvatureCorrectionUnder5km() {
@@ -117,6 +121,88 @@ class GeoCalculationsTest {
         )
         // Up should be exactly +100 m (no curvature subtraction).
         assertThat(enu.up).isWithin(0.001).of(100.0)
+    }
+
+    // ─── DEM-anchored observer altitude — mirrors iOS GeometryTests ──
+
+    @Test fun effectiveObserverAltitudeOnGroundSnapsToDEMEye() {
+        // Sensor within ±10 m of DEM ground + 1.7 m eye height → snap to
+        // the DEM-consistent eye altitude: self-consistency with the
+        // terrain being drawn beats sensor noise.
+        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 505.0, demGround = 500.0))
+            .isWithin(1e-9).of(501.7)
+        // Boundary: exactly at the +10 m tolerance edge still snaps.
+        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 511.7, demGround = 500.0))
+            .isWithin(1e-9).of(501.7)
+    }
+
+    @Test fun effectiveObserverAltitudeElevatedKeepsSensor() {
+        // More than 10 m ABOVE DEM + eye height → the user is genuinely
+        // elevated (tower, cable car, aircraft): keep the sensor value.
+        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 560.0, demGround = 500.0))
+            .isWithin(1e-9).of(560.0)
+    }
+
+    @Test fun effectiveObserverAltitudeUndergroundSnapsToDEMEye() {
+        // More than 10 m BELOW DEM ground is impossible (sensor drift) →
+        // snap to DEM + eye height.
+        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 480.0, demGround = 500.0))
+            .isWithin(1e-9).of(501.7)
+    }
+
+    @Test fun effectiveObserverAltitudeNoDEMFallsBackToSensor() {
+        // No DEM value → current behaviour: the (baro-preferred, else GPS)
+        // sensor value passes through unchanged.
+        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 480.0, demGround = null))
+            .isWithin(1e-9).of(480.0)
+    }
+
+    // ─── Manual compass alignment (ENU rotation + pan conversion) ────
+    //     Mirrors iOS GeometryTests.
+
+    @Test fun rotateENUZeroDegreesIsIdentity() {
+        val r = GeoCalculations.rotateENU(east = 123.4, north = -56.7, clockwiseDegrees = 0.0)
+        assertThat(r.east).isWithin(1e-9).of(123.4)
+        assertThat(r.north).isWithin(1e-9).of(-56.7)
+    }
+
+    @Test fun rotateENUPlus90MapsNorthToEast() {
+        // Compass-sense rotation: +90° takes a due-North point (bearing 0)
+        // to due East (bearing 90) — the overlay shifts clockwise/right.
+        val r = GeoCalculations.rotateENU(east = 0.0, north = 100.0, clockwiseDegrees = 90.0)
+        assertThat(r.east).isWithin(1e-9).of(100.0)
+        assertThat(r.north).isWithin(1e-9).of(0.0)
+    }
+
+    @Test fun rotateENUMinus90MapsNorthToWest() {
+        // −90° takes due North (bearing 0) to due West (bearing 270).
+        val r = GeoCalculations.rotateENU(east = 0.0, north = 100.0, clockwiseDegrees = -90.0)
+        assertThat(r.east).isWithin(1e-9).of(-100.0)
+        assertThat(r.north).isWithin(1e-9).of(0.0)
+    }
+
+    @Test fun alignmentPanConversionSignAndScale() {
+        // 8 dp of rightward pan = +1° of alignment; sign follows the finger.
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = 8.0))
+            .isWithin(1e-9).of(1.0)
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = -16.0))
+            .isWithin(1e-9).of(-2.0)
+        // Pan continues from the latched base, it doesn't restart at zero.
+        assertThat(alignmentOffsetDegrees(base = 5.0, panTranslationDp = 24.0))
+            .isWithin(1e-9).of(8.0)
+    }
+
+    @Test fun alignmentPanConversionClampsToPlusMinus30() {
+        // A screen-crossing fling can't exceed the ±30° clamp in either
+        // direction, whatever the starting base.
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = 10_000.0))
+            .isWithin(1e-9).of(30.0)
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = -10_000.0))
+            .isWithin(1e-9).of(-30.0)
+        assertThat(alignmentOffsetDegrees(base = 29.0, panTranslationDp = 80.0))
+            .isWithin(1e-9).of(30.0)
+        assertThat(alignmentOffsetDegrees(base = -29.0, panTranslationDp = -80.0))
+            .isWithin(1e-9).of(-30.0)
     }
 
     // ─── horizonDistance / project / apparentAltitudeAngle ────────

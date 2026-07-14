@@ -65,6 +65,12 @@ fun HorizonOverlay(
     controller: ArSceneController,
     userLocation: Location?,
     barometerAltitude: Double?,
+    /** The DEM-anchored observer altitude the skyline was computed with
+     *  ([SkylineCalculator.observerAltitudeUsed]). When present it wins
+     *  over the baro/GPS expression so the drawn line, the welded pills
+     *  and the picker all share ONE altitude; `null` (before the first
+     *  skyline pass) falls back to the baro-preferred sensor value. */
+    observerAltitudeUsed: Double?,
     skyline: List<SkylineSample>,
     peaks: List<NearbyPeak>,
     modifier: Modifier = Modifier
@@ -84,46 +90,52 @@ fun HorizonOverlay(
     val cam: FloatArray = cameraPosState ?: return
     val viewport: ArSceneController.IntSize = viewportState ?: return
 
-    // Camera heading (degrees, 0 = N). The ARCore pose heading plus the
-    // true-north correction (ARCore isn't north-aligned) gives the device's TRUE
-    // heading, so the overlay's bearing window centres on true north — matching
-    // the placement, which projectToScreen rotates by the same correction.
-    val headingDeg = cameraHeadingDeg(view) + controller.frameYawOffsetDeg
+    // CONTENT heading (degrees, 0 = N): the ARCore pose heading plus the
+    // COMPOSED yaw correction (automatic true-north fix MINUS the manual
+    // alignment knob). projectToScreen rotates drawn content by that same
+    // composed value, so the bearing whose content sits at the screen centre
+    // is exactly this — windowing by it keeps the drawn line centred while
+    // the user drags the panorama into alignment. Mirrors iOS
+    // `contentHeadingDeg = headingDeg − headingAlignmentDeg`.
+    val headingDeg = cameraHeadingDeg(view) + controller.appliedYawOffsetDeg
 
     // No clamp to >= 0: a below-sea-level observer (Dead Sea, Death Valley) has a
     // real negative eye height, and the silhouette/labels must use it (matches
-    // iOS, and the SkylineCalculator that picked the silhouette). The barometer
-    // is already pre-filtered to > 0 at the call site.
-    val observerAlt = barometerAltitude ?: userLocation.altitude
+    // iOS, and the SkylineCalculator that picked the silhouette). The DEM-anchored
+    // altitude the skyline was computed with wins when available (one source of
+    // truth across skyline/pills/markers); the barometer fallback is already
+    // pre-filtered to > 0 at the call site.
+    val observerAlt = observerAltitudeUsed ?: barometerAltitude ?: userLocation.altitude
     val h = max(observerAlt, 1.5) // floor so very-low altitudes still draw something
-    val geometricHorizon = GeoCalculations.horizonDistance(h)
+    // Geometric horizon distance with the same refraction-corrected radius as
+    // the skyline picker (`GeoCalculations.EFFECTIVE_EARTH_RADIUS`) — every
+    // curvature term along the AR sightline must use the SAME radius or the
+    // drawn line detaches from the computed silhouette.
+    val geometricHorizon = GeoCalculations.horizonDistance(h, GeoCalculations.EFFECTIVE_EARTH_RADIUS)
 
     val sampleStepDeg = 1.0
     val headingHalfWindowDeg = 110.0
 
-    // Build screen-space segments by walking from `headingDeg − 110°`
-    // to `headingDeg + 110°` in 1° steps.
+    // Build screen-space segments across the `headingDeg ± 110°` window.
     val segments = remember(skyline, view, cam, viewport, observerAlt) {
         val list = ArrayList<MutableList<Offset>>()
         var current = mutableListOf<Offset>()
         val maxSegmentGap = 600f
 
-        var bearing = headingDeg - headingHalfWindowDeg
-        val upper = headingDeg + headingHalfWindowDeg
-        while (bearing <= upper) {
-            val (distance, altitude) = resolveBearing(bearing, skyline, geometricHorizon)
-            // **No** clamp to the geometric horizon. Distant tall
-            // peaks (Everest from 200 km, etc.) are visible past
-            // the sea-level horizon precisely because their
-            // elevation lifts them above eye level — clamping
-            // would project them at the wrong distance and the
-            // line would draw at the horizon instead of along the
-            // real silhouette. Off-screen culling is handled by
-            // the projection bounds check below, not by distance.
-            val theta = Math.toRadians(bearing)
+        // Shared projection + segment assembly for one silhouette vertex.
+        // `up` is the apparent rise relative to the observer including the
+        // Earth-curvature drop; for the geometric path it works out to
+        // exactly `-h` — the skyline lies *h* metres below eye level.
+        // **No** clamp to the geometric horizon: distant tall peaks
+        // (Everest from 200 km, etc.) are visible past the sea-level
+        // horizon precisely because their elevation lifts them above eye
+        // level — clamping would project them at the wrong distance.
+        // Off-screen culling is the projection bounds check, not distance.
+        fun appendSilhouettePoint(bearingDeg: Double, distance: Double, altitude: Double) {
+            val theta = Math.toRadians(bearingDeg)
             val east = distance * kotlin.math.sin(theta)
             val north = distance * kotlin.math.cos(theta)
-            val curvatureDrop = (distance * distance) / (2.0 * GeoCalculations.EARTH_RADIUS)
+            val curvatureDrop = (distance * distance) / (2.0 * GeoCalculations.EFFECTIVE_EARTH_RADIUS)
             val up = (altitude - observerAlt) - curvatureDrop
 
             val world = floatArrayOf(
@@ -148,7 +160,38 @@ fun HorizonOverlay(
                 if (current.size >= 2) list.add(current)
                 current = mutableListOf()
             }
-            bearing += sampleStepDeg
+        }
+
+        if (skyline.isNotEmpty()) {
+            // Terrain mode walks the calculator's ACTUAL samples so every
+            // rendered vertex IS a real skyline sample. Two reasons this
+            // must not be a fixed-step lattice: (1) re-interpolating between
+            // samples blends (distance, altitude) pairs linearly, but the
+            // apparent angle is non-linear in that pair, so wherever a near
+            // hill met a distant ridge the blend cut a V-notch *below* both
+            // real samples; (2) the adaptive bearing refinement inserts
+            // midpoint bearings at silhouette discontinuities, so the sample
+            // set is intentionally non-uniform — a lattice walk would skip
+            // exactly the extra detail it adds. Samples are selected by
+            // wrap-aware heading delta and sorted by that (unwrapped) delta
+            // so segments connect in screen order across the 0°/360° seam.
+            skyline
+                .map { it to angleDelta(it.bearing, headingDeg) }
+                .filter { abs(it.second) <= headingHalfWindowDeg }
+                .sortedBy { it.second }
+                .forEach { (s, _) ->
+                    appendSilhouettePoint(s.bearing, s.distance, s.altitude)
+                }
+        } else {
+            // Geometric fallback keeps the fine fixed-step 1° grid (its
+            // line is smooth by construction): every horizon point is at
+            // sea level (alt 0) at the geometric distance.
+            var bearing = headingDeg - headingHalfWindowDeg
+            val upper = headingDeg + headingHalfWindowDeg
+            while (bearing <= upper) {
+                appendSilhouettePoint(bearing, geometricHorizon, 0.0)
+                bearing += sampleStepDeg
+            }
         }
         if (current.size >= 2) list.add(current)
         list
@@ -319,8 +362,9 @@ private fun CardinalLabel(text: String, position: Offset) {
  */
 fun peakOnSilhouette(peak: NearbyPeak, skyline: List<SkylineSample>, observerAlt: Double): Boolean {
     if (peak.name.isEmpty() || peak.distance < 1_000.0 || skyline.isEmpty()) return false
+    // Same refraction-corrected radius as the calculator and the overlay.
     fun angle(d: Double, alt: Double): Double =
-        atan2((alt - observerAlt) - (d * d) / (2.0 * GeoCalculations.EARTH_RADIUS), max(d, 1.0))
+        atan2((alt - observerAlt) - (d * d) / (2.0 * GeoCalculations.EFFECTIVE_EARTH_RADIUS), max(d, 1.0))
     val (skyDist, skyAlt) = interpolateSkyline(((peak.bearing % 360) + 360) % 360, skyline)
     val tol = Math.toRadians(1.5)
     return angle(peak.distance, peak.altitude) >= angle(skyDist, skyAlt) - tol
@@ -375,12 +419,43 @@ fun cameraHeadingDeg(view: FloatArray): Double {
 }
 
 /**
+ * Pure screen-space interpolation for the weld anchor: given the two
+ * skyline samples bracketing a peak's bearing (each already projected to
+ * its OWN screen point) blend the two screen points by the wrap-aware
+ * bearing fraction. Because the drawn polyline connects exactly those
+ * projected sample points with straight screen segments, the result lands
+ * exactly ON the drawn segment — unlike the old world-space blend of
+ * (distance, altitude), whose non-linear projection could put the pill's
+ * dot visibly off the line. Wrap-aware: lo 354° / hi 0° with a query at
+ * 358° interpolates 2/3 of the way. Extracted pure for unit testing.
+ * Mirrors iOS `weldedAnchorScreenPoint`.
+ */
+fun weldedAnchorScreenPoint(
+    bearing: Double,
+    loBearing: Double,
+    hiBearing: Double,
+    loScreen: Offset,
+    hiScreen: Offset
+): Offset {
+    val span = wrap(hiBearing - loBearing)
+    val pos = wrap(bearing - loBearing)
+    val t = if (span == 0.0) 0.0 else (pos / span).coerceIn(0.0, 1.0)
+    return Offset(
+        (loScreen.x + (hiScreen.x - loScreen.x) * t).toFloat(),
+        (loScreen.y + (hiScreen.y - loScreen.y) * t).toFloat()
+    )
+}
+
+/**
  * Screen position of the ridge silhouette point at [peak]'s bearing — the anchor
  * the welded label floats above (by [PEAK_LABEL_LEADER_DP]). Shared by the
  * renderer ([HorizonOverlay]) and the tap hit-test (NatureScreen) so the pill the
- * user sees and the point the user taps are computed identically. Returns null if
- * the camera isn't tracking or the point is behind the camera. Mirrors iOS
- * `weldedLabelAnchor`.
+ * user sees and the point the user taps are computed identically. Projects the
+ * two skyline samples around the peak's bearing with the SAME world-point math
+ * as the silhouette renderer, then interpolates between those two SCREEN points
+ * ([weldedAnchorScreenPoint]) so the anchor sits exactly on the drawn segment.
+ * Returns null if the camera isn't tracking or the point is behind the camera.
+ * Mirrors iOS `weldedLabelAnchor`.
  */
 fun weldedLabelAnchor(
     controller: ArSceneController,
@@ -390,17 +465,42 @@ fun weldedLabelAnchor(
 ): Offset? {
     if (skyline.isEmpty()) return null
     val cam = controller.cameraPosition.value ?: return null
-    val (skyDist, skyAlt) = interpolateSkyline(((peak.bearing % 360) + 360) % 360, skyline)
-    val theta = Math.toRadians(peak.bearing)
-    val east = skyDist * kotlin.math.sin(theta)
-    val north = skyDist * kotlin.math.cos(theta)
-    val up = (skyAlt - observerAlt) - (skyDist * skyDist) / (2.0 * GeoCalculations.EARTH_RADIUS)
-    val world = floatArrayOf(
-        east.toFloat() + cam[0], up.toFloat() + cam[1], (-north).toFloat() + cam[2]
-    )
-    val screen = controller.projectToScreen(world) ?: return null
-    if (!screen.x.isFinite() || !screen.y.isFinite()) return null
-    return screen
+
+    // Same up/curvature math as the silhouette renderer
+    // (`appendSilhouettePoint`), applied to a sample's OWN
+    // (bearing, distance, altitude).
+    fun project(s: SkylineSample): Offset? {
+        val theta = Math.toRadians(s.bearing)
+        val east = s.distance * kotlin.math.sin(theta)
+        val north = s.distance * kotlin.math.cos(theta)
+        val up = (s.altitude - observerAlt) -
+            (s.distance * s.distance) / (2.0 * GeoCalculations.EFFECTIVE_EARTH_RADIUS)
+        val world = floatArrayOf(
+            east.toFloat() + cam[0], up.toFloat() + cam[1], (-north).toFloat() + cam[2]
+        )
+        val screen = controller.projectToScreen(world) ?: return null
+        if (!screen.x.isFinite() || !screen.y.isFinite()) return null
+        return screen
+    }
+
+    if (skyline.size == 1) return project(skyline[0])
+
+    // Bracketing samples around the peak's bearing, wrap-aware (a peak at
+    // 358° brackets between the last and first samples).
+    val b = wrap(peak.bearing)
+    var hiIdx = firstBearingAbove(b, skyline)
+    val loIdx: Int
+    if (hiIdx == skyline.size || hiIdx == 0) {
+        loIdx = skyline.size - 1
+        hiIdx = 0
+    } else {
+        loIdx = hiIdx - 1
+    }
+    val lo = skyline[loIdx]
+    val hi = skyline[hiIdx]
+    val loScreen = project(lo) ?: return null
+    val hiScreen = project(hi) ?: return null
+    return weldedAnchorScreenPoint(b, lo.bearing, hi.bearing, loScreen, hiScreen)
 }
 
 /** A named-peak label welded to the silhouette: its peak [id] (for tap-back),
@@ -413,14 +513,56 @@ data class PeakLabelInfo(
 )
 
 /**
+ * Distance penalty of the peak-label importance score, metres of altitude
+ * per kilometre of distance. Calibrated so that between two similar-height
+ * summits the NEARER one wins its de-collision slot (any positive penalty
+ * does that), but a genuinely big summit survives against small near bumps:
+ * at 8 m/km a 4 000 m summit 30 km away (score 3 760) still crushes a
+ * 400 m hill 3 km away (score 376) — the old nearest-first sort labelled
+ * the hill and dropped the famous peak. Mirrors iOS
+ * `peakScoreDistancePenaltyMetersPerKm`.
+ */
+const val PEAK_SCORE_DISTANCE_PENALTY_M_PER_KM = 8.0
+
+/** Importance score used to hand out the limited welded-label slots:
+ *  `altitude_msl − 8 × distance_km`. Higher is more label-worthy. Pure so
+ *  the ordering is pinned by unit tests. Mirrors iOS `peakLabelScore`. */
+fun peakLabelScore(altitude: Double, distance: Double): Double =
+    altitude - PEAK_SCORE_DISTANCE_PENALTY_M_PER_KM * (distance / 1_000.0)
+
+/** Pure de-collision + cap selection over scored label candidates: highest
+ *  [peakLabelScore] first, keep a candidate only if its screen x stays
+ *  ≥ [minSpacing] from every already-kept label, stop at [maxCount].
+ *  Extracted from [weldedPeakLabels] so the slot-assignment policy is unit
+ *  testable without an AR session. Mirrors iOS `selectWeldedPeakLabels`. */
+fun selectWeldedPeakLabels(
+    candidates: List<Pair<PeakLabelInfo, Double>>,
+    minSpacing: Float,
+    maxCount: Int
+): List<PeakLabelInfo> {
+    val ordered = candidates.sortedByDescending { it.second }
+    val kept = ArrayList<PeakLabelInfo>()
+    for ((label, _) in ordered) {
+        if (kept.all { abs(it.pos.x - label.pos.x) >= minSpacing }) {
+            kept.add(label)
+            if (kept.size >= maxCount) break
+        }
+    }
+    return kept
+}
+
+/**
  * The named-peak labels actually welded to the silhouette this frame — the
  * SINGLE source of truth for which pills are drawn, shared by the renderer
  * ([HorizonOverlay]) and the tap hit-test (NatureScreen) so a tap can only ever
  * resolve to a pill the user can actually see (no phantom targets, no
- * nearer-vs-farther mix-up). Selection: peaks on/above the silhouette
- * ([peakOnSilhouette]), within the heading window, whose ridge anchor projects
- * on-screen; nearer peaks win when pills would overlap (kept >= minSpacing apart)
- * and the count is capped. Mirrors iOS `weldedPeakLabels`.
+ * importance mix-up). Selection: peaks on/above the silhouette
+ * ([peakOnSilhouette]), within the heading window (pass the
+ * alignment-compensated content heading, not the raw camera heading), whose
+ * ridge anchor projects on-screen; more IMPORTANT peaks ([peakLabelScore]:
+ * altitude − 8 m/km of distance) win when pills would overlap (kept
+ * >= minSpacing apart) and the count is capped. Mirrors iOS
+ * `weldedPeakLabels`.
  */
 fun weldedPeakLabels(
     controller: ArSceneController,
@@ -442,8 +584,7 @@ fun weldedPeakLabels(
     val maxLabels = 16
     val boundsMargin = 200f
 
-    data class Cand(val info: PeakLabelInfo, val distance: Double)
-    val cands = ArrayList<Cand>()
+    val candidates = ArrayList<Pair<PeakLabelInfo, Double>>()
     for (peak in peaks) {
         if (!peakOnSilhouette(peak, skyline, observerAlt)) continue
         if (abs(angleDelta(peak.bearing, headingDeg)) > headingHalfWindowDeg) continue
@@ -451,28 +592,12 @@ fun weldedPeakLabels(
         if (screen.x < -boundsMargin || screen.x > viewport.width + boundsMargin ||
             screen.y < -boundsMargin || screen.y > viewport.height + boundsMargin
         ) continue
-        cands.add(Cand(PeakLabelInfo(peak.id, peak.name, peak.altitude, screen), peak.distance))
+        candidates.add(
+            PeakLabelInfo(peak.id, peak.name, peak.altitude, screen) to
+                peakLabelScore(altitude = peak.altitude, distance = peak.distance)
+        )
     }
-    // Nearer (more prominent) peaks first; keep those >= minSpacing apart, capped.
-    cands.sortBy { it.distance }
-    val kept = ArrayList<PeakLabelInfo>()
-    for (c in cands) {
-        if (kept.all { abs(it.pos.x - c.info.pos.x) >= minSpacing }) {
-            kept.add(c.info)
-            if (kept.size >= maxLabels) break
-        }
-    }
-    return kept
-}
-
-private fun resolveBearing(
-    bearing: Double,
-    samples: List<SkylineSample>,
-    geometricHorizon: Double
-): Pair<Double, Double> {
-    if (samples.isEmpty()) return geometricHorizon to 0.0
-    val normalised = ((bearing % 360) + 360) % 360
-    return interpolateSkyline(normalised, samples)
+    return selectWeldedPeakLabels(candidates, minSpacing, maxLabels)
 }
 
 /** Binary search over a bearing-sorted skyline: first index whose bearing is
@@ -490,6 +615,11 @@ private fun firstBearingAbove(query: Double, samples: List<SkylineSample>): Int 
     return lo
 }
 
+/** Linear-interpolate the skyline `(distance, altitude)` at an arbitrary
+ *  bearing in [0, 360), with circular wrap-around. The terrain renderer
+ *  now walks the actual samples directly, so this remains only for
+ *  arbitrary-bearing skyline queries (the peak-weld / marker-suppression
+ *  paths). */
 private fun interpolateSkyline(
     bearing: Double,
     samples: List<SkylineSample>

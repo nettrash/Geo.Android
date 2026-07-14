@@ -6,6 +6,51 @@ Play `versionCode`; note that `versionCode` auto-increments on every
 assemble/bundle, so the value actually uploaded to Play may be higher than the
 one recorded here.
 
+## [Unreleased]
+
+### Added
+- **Drag to align the panorama.** The device compass is often several
+  degrees off, which used to slide the whole AR overlay sideways no matter
+  how accurate the terrain data was. Drag horizontally across the Nature
+  view to nudge the skyline, labels and markers onto the real mountains —
+  everything moves as one. A small chip shows the current adjustment
+  ("Alignment +4°"); tap it to reset. The adjustment lasts for the session.
+- **Smarter peak labels.** When ridge labels compete for space, Geo now
+  prefers the mountains that matter: a famous high summit on the horizon
+  wins its label slot over a small nearby bump, while between similar
+  summits the nearer one still wins.
+- **Offline packs now cache the full skyline range.** A pack used to hold
+  only a full-detail terrain core (~10 km) — offline, everything beyond it
+  silently vanished from the AR skyline. Each pack now adds two far-terrain
+  rings around its centre (~550 m detail to 50 km, ~2.2 km detail to 200 km
+  — matching the skyline's own angular resolution at range), so distant
+  mountain ranges stay in the silhouette with no signal, from any point in
+  the pack. Adds roughly 1.5 MB and a few minutes to a download; packs saved
+  before this update keep working (core-only, as before).
+
+### Fixed
+- **The Nature (AR) terrain skyline now matches the real horizon much more
+  closely.** Four compounding causes fixed together: the elevation sampling
+  schedule had ridge-swallowing gaps at range (22–60 km holes — whole mountain
+  ranges could fall between samples and vanish from the silhouette; now a dense
+  ≤1.15× geometric schedule), a new refinement pass finds the actual summit
+  crest between samples instead of drawing a flank, standard atmospheric
+  refraction (k = 0.13) is now applied to every sight-line — distant ranges
+  that are genuinely visible no longer sink below the drawn line — and the
+  renderer connects the real skyline samples directly instead of re-blending
+  them onto a finer grid, which used to cut V-shaped notches wherever a near
+  hill met a distant ridge. Peak labels, AR markers and the tap targets all
+  use the same corrected geometry, so everything stays welded together.
+- **Sharper skyline, better-anchored marks.** A second accuracy pass: the
+  skyline now adds extra bearings wherever the silhouette jumps (cliff
+  edges, narrow summits, near-to-far transitions), refines each ridge crest
+  twice, and anchors the observer's eye to the terrain model itself
+  (sensor altitude is kept only when you're genuinely above the ground —
+  towers, cable cars), so the whole panorama sits level. Peak name labels
+  now land exactly on the drawn ridge line, and the free-standing peak
+  markers use the same observer altitude as the skyline — they no longer
+  float above or below the ridge when the barometer and GPS disagree.
+
 ## [1.1] — 2026-06-18
 
 A correctness, accuracy and reliability release with a major Nature/AR upgrade:

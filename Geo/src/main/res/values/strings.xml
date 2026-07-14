@@ -189,7 +189,7 @@
     <string name="offline_download_area">Download this area</string>
     <string name="offline_section_saved">SAVED PACKS</string>
     <string name="offline_none_yet">None yet</string>
-    <string name="offline_footer">Caches the area\'s named peaks and the terrain skyline so the AR Nature view works with no signal. Map tiles aren\'t included (provider licensing).</string>
+    <string name="offline_footer">Caches the area\'s named peaks and the terrain skyline so the AR Nature view works with no signal. The chosen radius sets the peak coverage and the full-detail terrain core; the skyline\'s distant ranges are always cached out to 200 km around the pack at coarser detail. Map tiles aren\'t included (provider licensing).</string>
     <string name="offline_download_region">Download a region</string>
     <string name="offline_download_here">Download here</string>
     <string name="offline_delete_title">Delete offline area?</string>

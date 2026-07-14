@@ -21,6 +21,96 @@ object GeoCalculations {
      *  need to do their own ray/curvature math (e.g. skyline). */
     const val EARTH_RADIUS = 6_371_000.0
 
+    /** Standard terrestrial refraction coefficient (k ≈ 0.13). Light
+     *  grazing the surface bends *down* toward the Earth, so distant
+     *  terrain appears HIGHER than pure geometry suggests. Surveyors
+     *  model this by replacing the Earth radius with an effective
+     *  radius R/(1−k) wherever a curvature drop is computed. */
+    const val REFRACTION_COEFFICIENT = 0.13
+
+    /** Effective Earth radius with standard refraction folded in
+     *  (~7 323 km). Every curvature-drop term along the AR sightline —
+     *  the skyline picker, the horizon overlay, the peak welds and the
+     *  AR markers — must use THIS radius, and the same one everywhere,
+     *  or distant ranges render visibly too low (and the pieces detach
+     *  from each other). Mirrors iOS `Geometry.effectiveEarthRadius`. */
+    const val EFFECTIVE_EARTH_RADIUS = EARTH_RADIUS / (1 - REFRACTION_COEFFICIENT)
+
+    /** Horizontal-only ENU pair returned by [rotateENU]. */
+    data class ENUHorizontal(val east: Double, val north: Double)
+
+    /**
+     * Rotate a local ENU horizontal offset about the vertical axis by
+     * [clockwiseDegrees], in the COMPASS sense: positive degrees move a
+     * point at bearing θ to bearing θ + degrees (clockwise when viewed
+     * from above — N→E→S→W). Backs the manual compass-alignment knob
+     * (`ArSceneController.userAlignmentDeg`): rotating all drawn content
+     * to larger bearings shifts the overlay RIGHT on screen. (The
+     * controller's own ARCore-frame rotation is the INVERSE sense — it
+     * maps β to β − yaw — which is why it composes the knob by
+     * SUBTRACTING it from `frameYawOffsetDeg`; see `appliedYawOffsetDeg`.)
+     *
+     *     east'  = east·cos + north·sin
+     *     north' = north·cos − east·sin
+     *
+     * (Check: +90° maps due-North (0, d) to due-East (d, 0).) Pure so
+     * the sign convention is pinned by unit tests. Mirrors iOS
+     * `Geometry.rotateENU`.
+     */
+    fun rotateENU(east: Double, north: Double, clockwiseDegrees: Double): ENUHorizontal {
+        if (clockwiseDegrees == 0.0) return ENUHorizontal(east, north)
+        val r = Math.toRadians(clockwiseDegrees)
+        val c = cos(r)
+        val s = sin(r)
+        return ENUHorizontal(east * c + north * s, north * c - east * s)
+    }
+
+    /** Observer eye height (m) above the DEM ground cell the user is
+     *  standing on ([effectiveObserverAltitude]). */
+    const val OBSERVER_EYE_HEIGHT = 1.7
+
+    /** Sensor-vs-DEM disagreement (metres) beyond which we stop trusting
+     *  the DEM anchor and believe the sensor instead (the user may be on
+     *  a tower, cable car, aircraft, …). */
+    const val OBSERVER_ALTITUDE_TOLERANCE = 10.0
+
+    /**
+     * The observer altitude every AR consumer (skyline picker, horizon
+     * overlay, welded pills, markers, occlusion, tap hit-tests) should
+     * use, reconciling the barometer/GPS sensor value with the DEM cell
+     * the observer is standing on.
+     *
+     * Rationale: the silhouette is drawn FROM the DEM, so when the user
+     * is standing on the terrain being drawn, self-consistency with that
+     * terrain beats absolute sensor accuracy — a 10–30 m GPS/baro error
+     * tilts the whole near silhouette up or down. Decision:
+     *
+     *  - no DEM value → [sensor] unchanged (the baro>0-else-GPS input);
+     *  - sensor within ±[tolerance] of `demGround + eyeHeight` → snap to
+     *    `demGround + eyeHeight` (standing on the modelled terrain);
+     *  - sensor MORE than [tolerance] ABOVE `demGround + eyeHeight` →
+     *    keep [sensor] (genuinely elevated: tower, cable car, aircraft);
+     *  - otherwise (at/below eye level, incl. >[tolerance] below DEM
+     *    ground — underground is impossible, that's sensor drift) → snap
+     *    to `demGround + eyeHeight`.
+     *
+     * Pure and total so it unit-tests deterministically. Mirrors iOS
+     * `Geometry.effectiveObserverAltitude`.
+     */
+    fun effectiveObserverAltitude(
+        sensor: Double,
+        demGround: Double?,
+        eyeHeight: Double = OBSERVER_EYE_HEIGHT,
+        tolerance: Double = OBSERVER_ALTITUDE_TOLERANCE
+    ): Double {
+        if (demGround == null) return sensor
+        val demEye = demGround + eyeHeight
+        // Only a sensor reading well ABOVE the terrain eye line survives;
+        // everything else (within tolerance, below eye level, underground)
+        // snaps to the DEM-consistent eye altitude.
+        return if (sensor > demEye + tolerance) sensor else demEye
+    }
+
     /**
      * Calculate bearing (degrees) from one coordinate to another
      */
@@ -39,13 +129,19 @@ object GeoCalculations {
 
     /**
      * Convert GPS to local ENU (East-North-Up) offset in meters.
-     * Includes Earth curvature compensation for points >5km away.
+     * Includes Earth curvature compensation for points >5km away —
+     * without it distant peaks visibly "float" above the horizon. The
+     * default [radius] folds in standard refraction: every caller is an
+     * AR sight-line projection (peak markers, occlusion, tap hit-tests),
+     * and those must agree with the skyline, which is
+     * refraction-corrected too.
      */
     data class ENUOffset(val east: Double, val north: Double, val up: Double)
 
     fun gpsToENU(
         fromLat: Double, fromLon: Double, fromAlt: Double,
-        toLat: Double, toLon: Double, toAlt: Double
+        toLat: Double, toLon: Double, toAlt: Double,
+        radius: Double = EFFECTIVE_EARTH_RADIUS
     ): ENUOffset {
         val latRef = Math.toRadians(fromLat)
         val metersPerDegreeLon = METERS_PER_DEGREE_LAT * cos(latRef)
@@ -57,7 +153,7 @@ object GeoCalculations {
         val east = dLon * metersPerDegreeLon
 
         val horizontalDist = sqrt(north * north + east * east)
-        val curvatureDrop = (horizontalDist * horizontalDist) / (2.0 * EARTH_RADIUS)
+        val curvatureDrop = (horizontalDist * horizontalDist) / (2.0 * radius)
 
         val up = (toAlt - fromAlt) - if (horizontalDist > 5000) curvatureDrop else 0.0
 

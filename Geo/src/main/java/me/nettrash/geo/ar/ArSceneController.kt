@@ -94,6 +94,51 @@ class ArSceneController {
      *  per-frame [update] can derive the ARCore-frame → true-north offset. */
     fun setCompassTrueHeading(deg: Float) { compassTrueHeadingDeg = deg }
 
+    // ---- Manual compass alignment (user knob) --------------------------------
+
+    /** Manual compass-alignment offset (deg), set by the user's horizontal pan
+     *  in NatureScreen when the automatic compass heading is visibly off (a
+     *  typical magnetometer error is 5–15°) and the drawn panorama doesn't line
+     *  up with the real one. Applied inside the projection choke point (see
+     *  [appliedYawOffsetDeg]) so everything — skyline, cardinal labels, welded
+     *  pills, AR markers, occlusion targets, tap hit-tests, share render —
+     *  shifts coherently with one value.
+     *
+     *  SIGN CONVENTION (mirrors iOS `ARSessionManager.headingAlignmentDeg`):
+     *  positive rotates all drawn content CLOCKWISE in compass bearing (a
+     *  point drawn at bearing θ renders where θ + offset would) — because
+     *  screen-right corresponds to increasing azimuth relative to the camera,
+     *  a POSITIVE offset moves the overlay RIGHT on screen, matching a
+     *  rightward drag. Consumers that window content by camera heading must
+     *  compensate: the true bearing at the screen centre is
+     *  (cameraHeading − offset) — which is exactly what
+     *  `cameraHeadingDeg(view) + appliedYawOffsetDeg` yields.
+     *
+     *  Session-only by design (the controller is remembered per AR
+     *  composition, never persisted): compass error is different every
+     *  session. */
+    private val _userAlignmentDeg = MutableStateFlow(0f)
+    val userAlignmentDeg: StateFlow<Float> = _userAlignmentDeg.asStateFlow()
+
+    fun setUserAlignment(deg: Float) { _userAlignmentDeg.value = deg }
+
+    /** The total yaw rotation the projection choke point applies:
+     *  the automatic true-north correction MINUS the manual alignment.
+     *
+     *  Derivation of the minus (this composes with the historic true-north
+     *  fix — do not flip it casually): [trueNorthAdjusted]'s rotation maps a
+     *  point built at compass bearing β to bearing (β − yaw) in the ARCore
+     *  frame; with yaw = [frameYawOffsetDeg] (= true − arcore) that lands
+     *  true-bearing content at its correct ARCore direction. The manual knob
+     *  wants content at β to render where (β + offset) would — iOS's
+     *  `Geometry.rotateENU(clockwiseDegrees: offset)` — so the target ARCore
+     *  bearing becomes (β + offset − frameYaw) = β − (frameYaw − offset),
+     *  i.e. the SAME rotation with yaw = frameYawOffsetDeg − userAlignmentDeg.
+     *  Check: positive offset ⇒ content at larger bearings ⇒ overlay moves
+     *  RIGHT on screen, following a rightward drag. */
+    val appliedYawOffsetDeg: Float
+        get() = frameYawOffsetDeg - _userAlignmentDeg.value
+
     /** True when ARCore reports `TrackingState.TRACKING`. */
     private val _isTracking = MutableStateFlow(false)
     val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
@@ -412,7 +457,7 @@ class ArSceneController {
      * known yet.
      */
     fun trueNorthAdjusted(world: FloatArray): FloatArray =
-        trueNorthAdjusted(world, _cameraPosition.value, frameYawOffsetDeg)
+        trueNorthAdjusted(world, _cameraPosition.value, appliedYawOffsetDeg)
 
     /** Pure variant taking an explicit camera position + yaw offset, so an
      *  off-main caller can snapshot ONE consistent frame and pass it in rather
@@ -445,7 +490,11 @@ class ArSceneController {
         val view = _viewMatrix.value ?: return null
         val proj = _projectionMatrix.value ?: return null
         val vp = _viewportSize.value ?: return null
-        return projectToScreen(world, view, proj, vp, _cameraPosition.value, frameYawOffsetDeg)
+        // Composed yaw: automatic true-north correction + the manual
+        // compass-alignment knob (see [appliedYawOffsetDeg] for the sign
+        // derivation) — so every consumer of this choke point shifts
+        // coherently when the user drags the panorama into alignment.
+        return projectToScreen(world, view, proj, vp, _cameraPosition.value, appliedYawOffsetDeg)
     }
 
     /**

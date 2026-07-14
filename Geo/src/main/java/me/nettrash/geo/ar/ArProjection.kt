@@ -28,6 +28,13 @@ object ArProjection {
     /**
      * Project a target GPS coordinate to a viewport offset.
      *
+     * [observerAltitude] is the DEM-anchored observer altitude the
+     * skyline was computed with ([SkylineCalculator.observerAltitudeUsed]
+     * threaded through the caller) — the ONE altitude every AR consumer
+     * shares so markers can't vertically detach from the drawn
+     * silhouette; `null` falls back to the GPS altitude (mirrors iOS
+     * `PeakOverlayView`'s `observerAltitude ?? userLoc.altitude`).
+     *
      * Returns `null` if the camera isn't tracking, the point is
      * behind the camera, or it falls more than [margin] pixels
      * outside the viewport.
@@ -38,13 +45,15 @@ object ArProjection {
         targetLat: Double,
         targetLon: Double,
         targetAlt: Double,
+        observerAltitude: Double? = null,
         margin: Float = 50f
     ): Offset? {
         val camPos = controller.cameraPosition.value ?: return null
         val viewport = controller.viewportSize.value ?: return null
 
         val enu = GeoCalculations.gpsToENU(
-            userLocation.latitude, userLocation.longitude, userLocation.altitude,
+            userLocation.latitude, userLocation.longitude,
+            observerAltitude ?: userLocation.altitude,
             targetLat, targetLon, targetAlt
         )
 
