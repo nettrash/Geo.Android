@@ -161,6 +161,27 @@ object GeoCalculations {
     }
 
     /**
+     * Whether a peak of height [targetAltitude] is above the visible horizon for
+     * an observer at [observerAltitude], [distance] metres away — the classic
+     * two-tangent test: the peak clears the Earth's bulge when the distance is no
+     * more than the sum of the two horizon distances
+     * `√(2·R·h_obs) + √(2·R·h_peak)`. Uses the refraction-corrected effective
+     * radius so the cut matches the drawn geometric horizon. Ignores intervening
+     * terrain (which would need a DEM). Kept identical to iOS
+     * `Geometry.isAboveHorizon`.
+     */
+    fun isAboveHorizon(
+        observerAltitude: Double,
+        targetAltitude: Double,
+        distance: Double,
+        radius: Double = EFFECTIVE_EARTH_RADIUS
+    ): Boolean {
+        val ho = maxOf(observerAltitude, 0.0)
+        val hp = maxOf(targetAltitude, 0.0)
+        return distance <= sqrt(2 * radius * ho) + sqrt(2 * radius * hp)
+    }
+
+    /**
      * Distance between two coordinates in meters (haversine)
      */
     fun distanceBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

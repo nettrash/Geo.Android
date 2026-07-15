@@ -10,20 +10,19 @@ import android.provider.Settings
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateIntOffsetAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,6 +37,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,23 +47,29 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,12 +87,14 @@ import me.nettrash.geo.R
 import me.nettrash.geo.ar.ArProjection
 import me.nettrash.geo.ar.ArSceneController
 import me.nettrash.geo.ar.HorizonOverlay
+import me.nettrash.geo.ar.PanoramaCapture
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.ui.GeoViewModel
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 @Composable
 fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
@@ -234,6 +242,7 @@ private fun ArScene(
     isARActive: Boolean,
     viewModel: GeoViewModel
 ) {
+    val context = LocalContext.current
     val viewportSize = controller.viewportSize.collectAsState().value
     val isTracking by controller.isTracking.collectAsState()
     // Manual compass-alignment offset (session-only, lives on the controller so
@@ -249,6 +258,30 @@ private fun ArScene(
     // clamp to >= 0 (below-sea-level observers are real).
     val observerAlt =
         if (barometerHeight > 0) barometerHeight else (location?.altitude ?: 0.0)
+
+    // Min-altitude view filter (metres, 0…Everest) set by the on-screen slider.
+    // A live filter — the marker overlay, the tap hit-test and the top-bar count
+    // all read `filteredPeaks`, so they always agree. `< 1` = off. Persisted to
+    // SharedPreferences so the chosen floor is remembered across launches.
+    val naturePrefs = remember(context) {
+        context.getSharedPreferences("me.nettrash.geo.nature", android.content.Context.MODE_PRIVATE)
+    }
+    var minPeakAltitude by remember { mutableStateOf(naturePrefs.getFloat(KEY_MIN_PEAK_ALT, 0f)) }
+    val filteredPeaks = remember(peaks, minPeakAltitude) {
+        if (minPeakAltitude < 1f) peaks else peaks.filter { it.altitude >= minPeakAltitude }
+    }
+
+    // Freeze-frame capture: the Filament camera surface renders via Metal/GL and
+    // reads back BLACK through a normal view capture, so the shutter grabs it
+    // with PixelCopy and composites it with the recorded overlay (see
+    // `overlayLayer` below). `arView` is captured from the AndroidView factory.
+    var isCapturing by remember { mutableStateOf(false) }
+    var arView by remember { mutableStateOf<ARSceneView?>(null) }
+    val captureScope = rememberCoroutineScope()
+    // Records the horizon + peak-banner overlay so the shutter can read back
+    // exactly what's drawn; the chrome (top bar, slider, shutter) lives outside
+    // this layer so it isn't baked into the shared image.
+    val overlayLayer = rememberGraphicsLayer()
 
     // True-north alignment: ARCore's world frame isn't north-aligned, so feed the
     // controller the device's TRUE compass heading (magnetic azimuth corrected by
@@ -275,10 +308,9 @@ private fun ArScene(
     var selectedMarker by remember { mutableStateOf<ArMarkerSelection?>(null) }
     val density = LocalDensity.current
     val hitRadiusPx = with(density) { 56.dp.toPx() }
-    // Measured marker sizes (id → px). Markers are TOP-LEFT-anchored on their
-    // projected point, so the hit-test offsets by half the measured size to
-    // compare against the visual CENTRE (matching iOS's center anchor).
-    val markerSizes = remember { mutableStateMapOf<UUID, IntSize>() }
+    // Leader length in px — the hit-test targets the floating BANNER (summit
+    // lifted by this), where the label is drawn, not the bare summit dot.
+    val leaderPx = with(density) { PEAK_LEADER_DP.dp.toPx() }
 
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { /* viewport handled via AndroidView */ }) {
         AndroidView(
@@ -302,35 +334,44 @@ private fun ArScene(
                     onSessionUpdated = { session, frame ->
                         controller.update(session, frame, width, height)
                     }
-                }
+                }.also { arView = it }
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Geometric horizon line + cardinal markers, drawn first so peak markers
-        // sit on top of it.
-        if (location != null && isTracking) {
-            HorizonOverlay(
-                controller = controller,
-                userLocation = location,
-                barometerAltitude = barometerHeight.takeIf { it > 0 }
-            )
-        }
+        // Recorded overlay layer: the horizon + peak banners recorded into a
+        // GraphicsLayer so the shutter can read back exactly what's drawn (the
+        // Filament camera surface is captured separately via PixelCopy).
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    overlayLayer.record { this@drawWithContent.drawContent() }
+                    drawLayer(overlayLayer)
+                }
+        ) {
+            // Geometric horizon line + cardinal markers, drawn first so peak
+            // markers sit on top of it.
+            if (location != null && isTracking) {
+                HorizonOverlay(
+                    controller = controller,
+                    userLocation = location,
+                    barometerAltitude = barometerHeight.takeIf { it > 0 }
+                )
+            }
 
-        // Peak markers — the point of the tab. Only once the camera is actually
-        // tracking and the matrices are available, so a marker can't be drawn at
-        // the wrong place before the AR session warms up. EVERY peak the finder
-        // returns gets a marker: no occlusion culling (peaks are kilometres away,
-        // nothing indoors can meaningfully occlude them) and no ridge-weld
-        // suppression.
-        if (location != null && isTracking && viewportSize != null) {
-            ProjectedOverlay(
-                controller = controller,
-                userLocation = location,
-                observerAltitude = observerAlt,
-                peaks = peaks,
-                onMarkerSized = { id, size -> markerSizes[id] = size }
-            )
+            // Peak markers — the point of the tab. Only once the camera is actually
+            // tracking and the matrices are available, so a marker can't be drawn at
+            // the wrong place before the AR session warms up. EVERY visible peak
+            // gets a marker: no occlusion culling (peaks are kilometres away).
+            if (location != null && isTracking && viewportSize != null) {
+                ProjectedOverlay(
+                    controller = controller,
+                    userLocation = location,
+                    observerAltitude = observerAlt,
+                    peaks = filteredPeaks
+                )
+            }
         }
 
         // Tap/pan-catch layer: a tap runs a screen-space nearest-marker
@@ -351,11 +392,11 @@ private fun ArScene(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(peaks, viewportSize, location, observerAlt) {
+                    .pointerInput(filteredPeaks, viewportSize, location, observerAlt) {
                         detectTapGestures { tap ->
                             nearestMarker(
-                                tap, controller, location, peaks,
-                                hitRadiusPx, markerSizes, observerAlt
+                                tap, controller, location, filteredPeaks,
+                                hitRadiusPx, leaderPx, observerAlt
                             )?.let { selectedMarker = it }
                         }
                     }
@@ -405,7 +446,7 @@ private fun ArScene(
             // default system font is the closest Android-native match.
             Icon(Icons.Default.Terrain, null, tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
-            Text("${peaks.size}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text("${filteredPeaks.size}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
 
             Spacer(Modifier.weight(1f))
 
@@ -462,6 +503,58 @@ private fun ArScene(
             }
         }
 
+        // Min-altitude filter — a vertical bar on the right edge. Drag the handle
+        // up to raise the floor and hide the smaller peaks; the orange band above
+        // the handle is the altitude range being shown. Mirrors iOS.
+        AltitudeFilterSlider(
+            minAltitude = minPeakAltitude,
+            onChange = {
+                minPeakAltitude = it
+                naturePrefs.edit().putFloat(KEY_MIN_PEAK_ALT, it).apply()
+            },
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp)
+        )
+
+        // Shutter — capture a frozen photo of the camera + peak overlay to share.
+        // Outside the recorded overlay layer so the button isn't baked into the
+        // image.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 28.dp)
+                .size(68.dp)
+                .clip(CircleShape)
+                .clickable(enabled = isTracking && !isCapturing) {
+                    val view = arView ?: return@clickable
+                    isCapturing = true
+                    captureScope.launch {
+                        try {
+                            // GraphicsLayer readback must happen on the main thread.
+                            val overlay = overlayLayer.toImageBitmap().asAndroidBitmap()
+                            PanoramaCapture.captureAndShare(context, view, overlay, filteredPeaks.size)
+                        } finally {
+                            isCapturing = false
+                        }
+                    }
+                }
+                .border(4.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                .padding(7.dp)
+                .clip(CircleShape)
+                .background(if (isTracking) Color.White else Color.White.copy(alpha = 0.4f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isCapturing) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Black, strokeWidth = 2.dp)
+            } else {
+                Icon(
+                    Icons.Default.CameraAlt,
+                    contentDescription = stringResource(R.string.ar_capture),
+                    tint = Color.Black,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        }
+
         // Tap-to-identify detail sheet.
         selectedMarker?.let { sel ->
             MarkerDetailSheet(selection = sel, onDismiss = { selectedMarker = null })
@@ -498,12 +591,78 @@ fun alignmentOffsetDegrees(base: Double, panTranslationDp: Double): Double =
     (base + panTranslationDp / ALIGNMENT_PAN_DP_PER_DEGREE)
         .coerceIn(-ALIGNMENT_MAX_OFFSET_DEG, ALIGNMENT_MAX_OFFSET_DEG)
 
+/** Everest — the top of the min-altitude filter's range. */
+private const val MAX_FILTER_ALT = 8848f
+
+/**
+ * Vertical min-altitude filter. The handle's height on the track maps to a
+ * minimum peak altitude (0 at the bottom → Everest at the top); the orange band
+ * above the handle is the altitude range still shown. Tap or drag anywhere on the
+ * track to set it; the value rounds to a tidy 10 m. Session-only, unobtrusive,
+ * matching the view's pill styling. Mirrors iOS `AltitudeFilterSlider`.
+ */
+@Composable
+private fun AltitudeFilterSlider(
+    minAltitude: Float,
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val orange = Color(0xFFFF9800)
+    val setFromY: (Float, Float) -> Unit = { y, h ->
+        val clamped = y.coerceIn(0f, h)
+        val raw = (1f - clamped / h) * MAX_FILTER_ALT
+        onChange((raw / 10f).roundToInt() * 10f)
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
+        Text(
+            if (minAltitude < 1f) "All" else "≥ ${minAltitude.toInt()} m",
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color.Black.copy(alpha = 0.55f))
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+        Spacer(Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .width(44.dp)
+                .height(200.dp)
+                .pointerInput(Unit) { detectTapGestures { setFromY(it.y, size.height.toFloat()) } }
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures { change, _ ->
+                        change.consume()
+                        setFromY(change.position.y, size.height.toFloat())
+                    }
+                }
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val frac = (minAltitude / MAX_FILTER_ALT).coerceIn(0f, 1f)
+                val cx = size.width / 2f
+                val trackW = 5.dp.toPx()
+                val knobR = 9.dp.toPx()
+                val handleY = (size.height - 2 * knobR) * (1f - frac) + knobR
+                // Track casing.
+                drawLine(Color.White.copy(alpha = 0.18f), Offset(cx, 0f), Offset(cx, size.height),
+                         strokeWidth = trackW, cap = StrokeCap.Round)
+                // Shown band: from the handle up to the top (higher peaks).
+                drawLine(orange.copy(alpha = 0.55f), Offset(cx, 0f), Offset(cx, handleY),
+                         strokeWidth = trackW, cap = StrokeCap.Round)
+                // Handle: orange disc with a white ring.
+                drawCircle(Color.White, radius = knobR, center = Offset(cx, handleY))
+                drawCircle(orange, radius = knobR - 2.dp.toPx(), center = Offset(cx, handleY))
+            }
+        }
+    }
+}
+
 /**
  * Screen-space nearest-marker hit-test for tap-to-identify. Recomputes each
- * visible marker's projected position via [ArProjection] (the same source the
- * overlay uses) and returns the closest within [hitRadiusPx]. Applies the SAME
- * occluded / near-warm-up filter as [ProjectedOverlay] so an off-screen or
- * hidden marker can never be selected.
+ * peak's projected summit via [ArProjection] (the same source the overlay uses)
+ * and returns the closest whose BANNER is within [hitRadiusPx] of the tap. The
+ * banner sits at the leader top ([leaderPx] above the summit), so that — not the
+ * bare summit dot — is the tap target, matching iOS.
  */
 private fun nearestMarker(
     tap: Offset,
@@ -511,20 +670,11 @@ private fun nearestMarker(
     userLocation: android.location.Location,
     peaks: List<NearbyPeak>,
     hitRadiusPx: Float,
-    markerSizes: Map<UUID, IntSize>,
+    leaderPx: Float,
     observerAlt: Double
 ): ArMarkerSelection? {
     var best: ArMarkerSelection? = null
     var bestDist = hitRadiusPx
-
-    // Markers are TOP-LEFT-anchored on the projected point, so compare the tap
-    // against the marker's visual CENTRE (offset by half its measured size).
-    fun centerDist(id: UUID, off: Offset): Float {
-        val size = markerSizes[id]
-        val cx = if (size != null) off.x + size.width / 2f else off.x
-        val cy = if (size != null) off.y + size.height / 2f else off.y
-        return hypot((cx - tap.x).toDouble(), (cy - tap.y).toDouble()).toFloat()
-    }
 
     for (peak in peaks) {
         // Same unified observer altitude as ProjectedOverlay's projection, so the
@@ -533,151 +683,132 @@ private fun nearestMarker(
             controller, userLocation, peak.latitude, peak.longitude, peak.altitude,
             observerAltitude = observerAlt
         ) ?: continue
-        val d = centerDist(peak.id, off)
+        val target = Offset(off.x, off.y - leaderPx)   // banner anchor = leader top
+        val d = hypot((target.x - tap.x).toDouble(), (target.y - tap.y).toDouble()).toFloat()
         if (d <= bestDist) { bestDist = d; best = ArMarkerSelection.Peak(peak) }
     }
     return best
 }
 
+/** Leader length (dp) from a peak's projected summit up to its floating banner.
+ *  Mirrors iOS `peakBannerLeaderLength`. */
+private const val PEAK_LEADER_DP = 46f
+
+/** Counter-clockwise banner tilt (right edge lifted), so it stands up from the
+ *  leader like a signpost. At −75° it's near-vertical. Mirrors iOS
+ *  `bannerTiltDegrees`. */
+private const val PEAK_BANNER_TILT_DEG = -75f
+
 /**
- * Pixel-accurate overlay: each marker is positioned by projecting
- * its GPS coordinate through the AR camera matrices.
+ * Annotates each visible peak at its real summit: a dot at the projected summit,
+ * a thin leader rising from it, and a slightly tilted name/altitude banner at the
+ * leader top. The dot marks the exact peak; the banner floats clear so it never
+ * hides the summit you're identifying. Mirrors iOS `PeakOverlayView`.
  */
 @Composable
 private fun ProjectedOverlay(
     controller: ArSceneController,
     userLocation: android.location.Location,
-    /** Unified observer altitude (DEM-anchored skyline value, else baro,
-     *  else GPS) — see `ArScene.observerAlt`. */
+    /** Unified observer altitude (baro-preferred, else GPS) — see
+     *  `ArScene.observerAlt`. */
     observerAltitude: Double,
-    peaks: List<NearbyPeak>,
-    onMarkerSized: (UUID, IntSize) -> Unit = { _, _ -> }
+    peaks: List<NearbyPeak>
 ) {
-    // Subscribe to the per-frame tick so every marker re-projects each ARCore
+    // Subscribe to the per-frame tick so every annotation re-projects each ARCore
     // frame. The camera matrices are read through `.value` inside ArProjection,
     // which registers no Compose subscription — so without this read the markers
     // only recompose when some other observed state happens to change, and they
     // visibly jump and blink instead of tracking the camera. Mirrors iOS
     // `PeakOverlayView`'s `_ = sessionManager.frameTick`.
     val frameTick by controller.frameTick.collectAsState()
+    val leaderPx = with(LocalDensity.current) { PEAK_LEADER_DP.dp.toPx() }
+    val orange = Color(0xFFFF9800)
+
+    // Project every peak once per frame. `summit` is the peak top; `anchor` (the
+    // leader top) is the banner's bottom-centre.
+    data class Projected(val peak: NearbyPeak, val summit: Offset, val opacity: Float, val scale: Float) {
+        val anchor get() = Offset(summit.x, summit.y - leaderPx)
+    }
+    val projected = remember(frameTick, peaks, userLocation, observerAltitude) {
+        peaks.mapNotNull { peak ->
+            val off = ArProjection.projectGps(
+                controller, userLocation, peak.latitude, peak.longitude, peak.altitude,
+                observerAltitude = observerAltitude
+            ) ?: return@mapNotNull null
+            val opacity = (1.0 - (peak.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
+            val scale = (1.0 - (peak.distance / 50_000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
+            Projected(peak, off, opacity, scale)
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // `key(id)` makes each marker's animation state survive list
-        // reorderings (the merge step in PeakFinder can shuffle
-        // order without changing identities).
-        //
-        // We DON'T use `return@key` to skip off-screen markers
-        // because `key` is `@Composable inline fun` and a non-local
-        // return out of its body through the outer (non-inline)
-        // `forEach` lambda generates a `$$$$$NON_LOCAL_RETURN$$$$$`
-        // helper class that R8 can't represent in dex format.
-        // A plain `if (off != null)` does the same thing and dexes.
-        peaks.forEach { peak ->
-            key(peak.id) {
-                // Keyed on frameTick so it re-projects once per frame, and only
-                // once per frame (rather than on every unrelated recomposition).
-                val off = remember(frameTick, peak.id, userLocation, observerAltitude) {
-                    ArProjection.projectGps(
-                        controller = controller,
-                        userLocation = userLocation,
-                        targetLat = peak.latitude,
-                        targetLon = peak.longitude,
-                        targetAlt = peak.altitude,
-                        observerAltitude = observerAltitude
-                    )
-                }
-                if (off != null) {
-                    val opacity = (1.0 - (peak.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
-                    val scale = (1.0 - (peak.distance / 50_000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
-                    AnimatedMarker(target = off, onMeasured = { onMarkerSized(peak.id, it) }) {
-                        PeakMarker(peak = peak, opacity = opacity, scale = scale)
-                    }
-                }
+        // Leaders + summit dots — one Canvas for all of them.
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val lineW = 1.5.dp.toPx()
+            val dotR = 2.5.dp.toPx()
+            for (p in projected) {
+                drawLine(
+                    color = orange.copy(alpha = 0.9f * p.opacity),
+                    start = p.summit, end = p.anchor,
+                    strokeWidth = lineW, cap = StrokeCap.Round
+                )
+                drawCircle(orange.copy(alpha = p.opacity), radius = dotR, center = p.summit)
+            }
+        }
+        // Tilted name/altitude banners at the leader tops.
+        for (p in projected) {
+            key(p.peak.id) {
+                PeakBanner(peak = p.peak, anchor = p.anchor, tiltDeg = PEAK_BANNER_TILT_DEG,
+                           scale = p.scale, opacity = p.opacity)
             }
         }
     }
 }
 
 /**
- * Position [content] at [target] with a short linear glide between
- * updates so markers don't snap when a fresh AR projection arrives.
- * Mirrors iOS's `.animation(.linear(duration: 1/30), value: screenPos)`
- * — 33 ms is fast enough to feel real-time but smooths the
- * ~half-pixel jitter from each frame's projection refresh.
- *
- * `Modifier.absoluteOffset` (taking an `IntOffset` lambda) accepts
- * negative values, which matters because the projection can yield
- * positions in the [-50, viewportSize + 50] margin so markers don't
- * pop out abruptly at the edges.
+ * A peak's floating name/altitude banner. Single-line so it reads cleanly as one
+ * strip when stood up near-vertical. Measures itself and pins its bottom-LEADING
+ * corner to [anchor] (the leader top) via a `graphicsLayer`, rotating and scaling
+ * about that corner so the banner rises from the leader tip like a signpost
+ * regardless of tilt or distance scaling. Parked invisible until measured.
+ * Mirrors iOS `PeakSummitBanner`.
  */
 @Composable
-private fun AnimatedMarker(
-    target: androidx.compose.ui.geometry.Offset,
-    onMeasured: (IntSize) -> Unit = {},
-    content: @Composable () -> Unit
-) {
-    val animated by animateIntOffsetAsState(
-        targetValue = IntOffset(target.x.toInt(), target.y.toInt()),
-        animationSpec = tween(durationMillis = 33, easing = LinearEasing),
-        label = "marker_offset"
-    )
+private fun PeakBanner(peak: NearbyPeak, anchor: Offset, tiltDeg: Float, scale: Float, opacity: Float) {
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    val orange = Color(0xFFFF9800)
     Box(
         modifier = Modifier
-            .absoluteOffset { animated }
-            .onSizeChanged(onMeasured)
+            .graphicsLayer {
+                transformOrigin = TransformOrigin(0f, 1f)   // bottom-leading corner
+                rotationZ = tiltDeg
+                scaleX = scale
+                scaleY = scale
+                translationX = anchor.x
+                translationY = anchor.y - size.height
+                alpha = if (size == IntSize.Zero) 0f else opacity
+            }
+            .onSizeChanged { size = it }
     ) {
-        content()
-    }
-}
-
-/**
- * Single peak marker. Kept visually in step with iOS `PeakMarkerView`: WHITE
- * name (not orange), a dimmer "distance · altitude" detail line, a small orange
- * down-triangle pointing at the summit, and a translucent-black card with a thin
- * orange border. Uses the default (rounded-ish) system font rather than the old
- * Monospace, closer to iOS's `.rounded` while staying Android-native. Distance
- * and altitude use iOS's own m-below-1km / km-above formatting.
- */
-@Composable
-private fun PeakMarker(peak: NearbyPeak, opacity: Float = 1f, scale: Float = 1f) {
-    val orange = Color(0xFFFF9800)
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color.Black.copy(alpha = 0.6f * opacity))
-            .border(1.dp, orange.copy(alpha = 0.8f * opacity), RoundedCornerShape(8.dp))
-            .padding(horizontal = (8 * scale).dp, vertical = (5 * scale).dp)
-    ) {
-        Text(
-            peak.name,
-            color = Color.White.copy(alpha = opacity),
-            fontSize = (13 * scale).sp,
-            fontWeight = FontWeight.Bold
-        )
-        val detail = buildString {
-            append(formatMeters(peak.distance))
-            if (peak.altitude > 0) append(" · ").append(formatMeters(peak.altitude))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(7.dp))
+                .background(Color.Black.copy(alpha = 0.6f))
+                .border(1.dp, orange.copy(alpha = 0.8f), RoundedCornerShape(7.dp))
+                .padding(horizontal = 7.dp, vertical = 3.dp)
+        ) {
+            Text(peak.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            if (peak.altitude > 0) {
+                Spacer(Modifier.width(5.dp))
+                // Summit altitude in metres — the mountaineering convention
+                // ("Mont Blanc 4808 m"), not kilometres.
+                Text("${peak.altitude.toInt()} m", color = Color.White.copy(alpha = 0.8f),
+                     fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            }
         }
-        Text(
-            detail,
-            color = Color.White.copy(alpha = 0.85f * opacity),
-            fontSize = (11 * scale).sp,
-            fontWeight = FontWeight.Medium
-        )
-        Text(
-            "▼",
-            color = orange.copy(alpha = opacity),
-            fontSize = (8 * scale).sp
-        )
     }
 }
-
-/** iOS `PeakMarkerView.formatDistance`/`formatAltitude`: whole metres below
- *  1 km, one decimal of km above. */
-private fun formatMeters(meters: Double): String =
-    if (meters >= 1000) String.format(Locale.US, "%.1f km", meters / 1000)
-    else String.format(Locale.US, "%.0f m", meters)
 
 /**
  * Pre-AR splash. iOS wording: title is "About the Nature view"; the
@@ -761,6 +892,7 @@ private fun ArUnavailableScreen() {
 }
 
 private const val KEY_CAMERA_REQUESTED = "camera_requested"
+private const val KEY_MIN_PEAK_ALT = "min_peak_altitude"
 
 private fun openAppSettings(context: android.content.Context) {
     val intent = Intent(

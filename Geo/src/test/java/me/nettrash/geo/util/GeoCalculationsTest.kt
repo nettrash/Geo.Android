@@ -308,4 +308,29 @@ class GeoCalculationsTest {
         assertThat(GeoCalculations.cardinalDirection(Double.POSITIVE_INFINITY)).isEqualTo("N")
         assertThat(GeoCalculations.cardinalDirection(Double.NEGATIVE_INFINITY)).isEqualTo("N")
     }
+
+    // ── Horizon visibility ── mirrors iOS `HorizonVisibilityTests`. ──────────
+
+    @Test fun tallNearbyPeakIsVisible() {
+        // 3000 m peak 20 km away, observer at 500 m: comfortably over the horizon.
+        assertThat(GeoCalculations.isAboveHorizon(500.0, 3000.0, 20_000.0)).isTrue()
+    }
+
+    @Test fun lowFarPeakBelowSeaLevelObserverIsHidden() {
+        // A 200 m hill 120 km away, observer at the shore (0 m): hidden.
+        assertThat(GeoCalculations.isAboveHorizon(0.0, 200.0, 120_000.0)).isFalse()
+    }
+
+    @Test fun heightExtendsVisibility() {
+        // The same far hill becomes visible from a high vantage.
+        assertThat(GeoCalculations.isAboveHorizon(0.0, 500.0, 150_000.0)).isFalse()
+        assertThat(GeoCalculations.isAboveHorizon(3000.0, 500.0, 150_000.0)).isTrue()
+    }
+
+    @Test fun exactlyAtCombinedHorizonIsVisible() {
+        val r = GeoCalculations.EFFECTIVE_EARTH_RADIUS
+        val d = Math.sqrt(2 * r * 100.0) + Math.sqrt(2 * r * 100.0)
+        assertThat(GeoCalculations.isAboveHorizon(100.0, 100.0, d, r)).isTrue()
+        assertThat(GeoCalculations.isAboveHorizon(100.0, 100.0, d + 1, r)).isFalse()
+    }
 }

@@ -530,9 +530,14 @@ class GeoViewModel @Inject constructor(
     fun searchForPeaks() {
         val loc = locationManager.location.value ?: return
         viewModelScope.launch {
+            // Barometer-preferred observer altitude (baro is far more reliable
+            // vertically than GPS) for the horizon-visibility cut; 0 means the
+            // sensor hasn't produced a value yet, so fall back to GPS.
+            val obsAlt = barometerManager.height.value.takeIf { it > 0 } ?: loc.altitude
             val results = peakFinder.searchPeaks(
                 loc, _mountainsData.value, _peaks.value,
-                offlinePackRepository.combinedPeaks.value
+                offlinePackRepository.combinedPeaks.value,
+                observerAltitude = obsAlt
             )
             _peaks.value = results
         }
