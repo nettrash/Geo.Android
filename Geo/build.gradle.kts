@@ -44,7 +44,7 @@ val storedVersionCode: Int = run {
 }
 
 val resolvedVersionName: String =
-    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.1"
+    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.2"
 
 // Allow opting out of the bump for one build (useful for CI which doesn't
 // want to mutate the tracked file on the runner): `-PnoBump`.
