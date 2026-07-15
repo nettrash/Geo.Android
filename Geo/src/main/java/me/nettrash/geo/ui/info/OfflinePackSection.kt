@@ -52,7 +52,6 @@ private val ACCENT = Color(0xFFFF9800)
 fun OfflineExpeditionCard(viewModel: GeoViewModel) {
     val packs by viewModel.offlinePacks.collectAsState()
     val downloading by viewModel.offlinePackDownloading.collectAsState()
-    val progress by viewModel.offlinePackProgress.collectAsState()
     val status by viewModel.offlinePackStatus.collectAsState()
     val location by viewModel.locationManager.location.collectAsState()
     var showManager by remember { mutableStateOf(false) }
@@ -62,8 +61,10 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
             MonoText(if (packs.isEmpty()) stringResource(R.string.offline_no_areas) else "${packs.size} saved")
         }
         if (downloading) {
+            // A pack is now a single Overpass peak query — no multi-step phase to
+            // chart — so just show the status text, not a 0%-stuck percentage.
             InfoRow(if (status.isEmpty()) stringResource(R.string.offline_downloading) else status) {
-                MonoText("${(progress * 100).toInt()}%")
+                MonoText("…")
             }
         }
         Row(
@@ -85,7 +86,6 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
         OfflinePackManagerDialog(
             packs = packs,
             downloading = downloading,
-            progress = progress,
             status = status,
             hasLocation = location != null,
             onDownload = { name, radius -> viewModel.downloadOfflinePack(name, radius) },
@@ -100,7 +100,6 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
 private fun OfflinePackManagerDialog(
     packs: List<OfflinePack>,
     downloading: Boolean,
-    progress: Float,
     status: String,
     hasLocation: Boolean,
     onDownload: (String, Double) -> Unit,
@@ -176,8 +175,9 @@ private fun OfflinePackManagerDialog(
                             fontSize = 12.sp
                         )
                         Spacer(Modifier.height(6.dp))
+                        // Indeterminate: a peaks-only pack is a single quick query
+                        // with no chartable phases (was a 0%-stuck determinate bar).
                         LinearProgressIndicator(
-                            progress = { progress },
                             modifier = Modifier.fillMaxWidth(),
                             color = ACCENT
                         )

@@ -50,9 +50,27 @@ class PeakFinder @Inject constructor(
 ) {
 
     private val searchRadius = 5_000.0   // 5 km
+
+    /** How far a peak may be from the observer and still be kept for the AR
+     *  overlay. Deliberately MUCH larger than [searchRadius]: the live Overpass
+     *  query only reaches 5 km (to stay polite on the shared endpoint), but a
+     *  downloaded offline pack holds peaks out to 100 km — and in a camera
+     *  peak-identifier the summits you point at are the distant ones on the
+     *  horizon. Capping at `searchRadius × 2` threw ~90 % of a big pack away.
+     *  The AR projection already culls peaks below the horizon / off screen, so
+     *  this is a coverage bound, not a visibility one. Mirrors iOS
+     *  `PeakFinder.maxPeakRenderDistance`. */
+    private val maxPeakRenderDistanceM = 80_000.0   // 80 km
+
     private val minimumSearchDistance = 500.0 // re-search after 500 m of movement
     private val peakTtlMs = 60L * 60L * 1000L  // 1 hour
-    private val maxRetainedPeaks = 200
+
+    /** Max peaks kept in the merged set (nearest-first eviction). Larger than
+     *  before so a dense range doesn't evict the distant flagship summits (the
+     *  whole point of pointing the camera at the horizon) in favour of nearer
+     *  foothills. Only in-view peaks are drawn, so the on-screen count stays
+     *  small regardless. Mirrors iOS. */
+    private val maxRetainedPeaks = 300
 
     private var lastSearchLocation: Location? = null
     private val json = Json { ignoreUnknownKeys = true }
@@ -120,9 +138,10 @@ class PeakFinder @Inject constructor(
             for (p in currentPeaks) byId[p.id] = p
             for (p in freshPeaks) byId[p.id] = p
 
-            // Hysteresis + TTL: drop entries far outside the search
-            // radius OR not seen in a while.
-            val dropRadius = searchRadius * 2
+            // Keep peaks out to the render distance (not just the 5 km search
+            // radius) so downloaded offline packs show distant horizon summits,
+            // then age out anything not re-confirmed within the TTL.
+            val dropRadius = maxPeakRenderDistanceM
             val merged = byId.values
                 .filter { peak ->
                     val pl = Location("").apply {
@@ -159,7 +178,7 @@ class PeakFinder @Inject constructor(
         // ages out peaks that haven't been re-confirmed within peakTtlMs or
         // have drifted outside the drop radius.
         val now = System.currentTimeMillis()
-        val dropRadius = searchRadius * 2
+        val dropRadius = maxPeakRenderDistanceM
         return peaks
             .filter { peak ->
                 val pl = Location("").apply {
