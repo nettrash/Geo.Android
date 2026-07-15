@@ -2,15 +2,19 @@ package me.nettrash.geo.ar
 
 import android.location.Location
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -19,8 +23,10 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nettrash.geo.util.GeoCalculations
@@ -64,6 +70,9 @@ fun HorizonOverlay(
     val cameraPosState by controller.cameraPosition.collectAsState()
     val isTracking by controller.isTracking.collectAsState()
     val viewMatrixState by controller.viewMatrix.collectAsState()
+    // Per-frame refresh signal — the same one the peak markers use, so the
+    // horizon line, the cardinal markers and the markers all move on one clock.
+    val frameTick by controller.frameTick.collectAsState()
 
     if (userLocation == null || !isTracking) return
     // Bind to local non-null values. `by collectAsState()` produces a delegated
@@ -91,7 +100,7 @@ fun HorizonOverlay(
     val headingHalfWindowDeg = 110.0
 
     // Build screen-space segments across the `headingDeg ± 110°` window.
-    val segments = remember(view, cam, viewport, observerAlt, headingDeg) {
+    val segments = remember(frameTick, viewport, observerAlt) {
         val list = ArrayList<MutableList<Offset>>()
         var current = mutableListOf<Offset>()
         val maxSegmentGap = 600f
@@ -143,7 +152,7 @@ fun HorizonOverlay(
     // Cardinal + intercardinal markers, anchored to true compass bearings. They
     // sit at `-h` (rather than the line's deeper `up`), which floats them a
     // fraction of a degree above the line so they don't collide with it.
-    val labels = remember(view, cam, viewport, observerAlt, headingDeg) {
+    val labels = remember(frameTick, viewport, observerAlt) {
         buildList {
             val cardinals = listOf(
                 "N" to 0.0, "NE" to 45.0, "E" to 90.0, "SE" to 135.0,
@@ -168,6 +177,11 @@ fun HorizonOverlay(
 
     Box(modifier = modifier.fillMaxSize()) {
         Canvas(modifier = Modifier.fillMaxSize()) {
+            // Widths in dp, NOT raw px: iOS strokes these in points (4 pt casing,
+            // 1.5 pt core), and 1 dp ≡ 1 point physically. As raw px they were
+            // ~1/3 the weight on a 3x screen, so the line read as a faint thread.
+            val casingWidth = HORIZON_CASING_DP.dp.toPx()
+            val coreWidth = HORIZON_CORE_DP.dp.toPx()
             for (segment in segments) {
                 if (segment.size < 2) continue
                 val path = Path().apply {
@@ -179,12 +193,14 @@ fun HorizonOverlay(
                 drawPath(
                     path = path,
                     color = Color.White.copy(alpha = 0.25f),
-                    style = Stroke(width = 4f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    style = Stroke(width = casingWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
                 drawPath(
                     path = path,
-                    color = Color(0xFF80DEEA),
-                    style = Stroke(width = 1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    // iOS `.cyan` (0xFF00FFFF) at 0.85 — a more saturated line than
+                    // the old light-cyan 0xFF80DEEA.
+                    color = Color.Cyan.copy(alpha = 0.85f),
+                    style = Stroke(width = coreWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
             }
         }
@@ -195,19 +211,34 @@ fun HorizonOverlay(
     }
 }
 
+/** Horizon-line stroke weights, in dp (≡ iOS points). */
+private const val HORIZON_CASING_DP = 4f
+private const val HORIZON_CORE_DP = 1.5f
+
+/**
+ * One cardinal marker, centred on [position]. Mirrors iOS: white heavy letter on
+ * a translucent-black capsule (the capsule is what keeps N/E/S/W readable against
+ * a bright sky — the Android version was previously bare white text).
+ *
+ * `.position` on iOS centres the view on the point; here we measure the pill and
+ * offset by half its size to do the same, rather than the old fixed −12/−10 guess.
+ */
 @Composable
 private fun CardinalLabel(text: String, position: Offset) {
+    var size by remember { mutableStateOf(IntSize.Zero) }
     Box(
         modifier = Modifier
-            .offset { IntOffset(position.x.toInt() - 12, position.y.toInt() - 10) }
-            .clip(RoundedCornerShape(8.dp))
+            .offset { IntOffset(position.x.toInt() - size.width / 2, position.y.toInt() - size.height / 2) }
+            .onSizeChanged { size = it }
+            .clip(RoundedCornerShape(percent = 50))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
     ) {
         Text(
             text = text,
             color = Color.White,
             fontSize = 13.sp,
-            fontWeight = FontWeight.Black,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp))
+            fontWeight = FontWeight.Black
         )
     }
 }

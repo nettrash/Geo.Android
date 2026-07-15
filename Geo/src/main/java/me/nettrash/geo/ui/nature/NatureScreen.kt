@@ -14,6 +14,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateIntOffsetAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -61,7 +62,6 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -401,9 +401,11 @@ private fun ArScene(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // iOS uses medium-weight rounded text here (not monospace); the
+            // default system font is the closest Android-native match.
             Icon(Icons.Default.Terrain, null, tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
-            Text("${peaks.size}", color = Color.White, fontSize = 14.sp)
+            Text("${peaks.size}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
 
             Spacer(Modifier.weight(1f))
 
@@ -417,7 +419,7 @@ private fun ArScene(
                 String.format(Locale.US, "%.0f°", heading),
                 color = Color.White,
                 fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace
+                fontWeight = FontWeight.Medium
             )
         }
 
@@ -551,6 +553,14 @@ private fun ProjectedOverlay(
     peaks: List<NearbyPeak>,
     onMarkerSized: (UUID, IntSize) -> Unit = { _, _ -> }
 ) {
+    // Subscribe to the per-frame tick so every marker re-projects each ARCore
+    // frame. The camera matrices are read through `.value` inside ArProjection,
+    // which registers no Compose subscription — so without this read the markers
+    // only recompose when some other observed state happens to change, and they
+    // visibly jump and blink instead of tracking the camera. Mirrors iOS
+    // `PeakOverlayView`'s `_ = sessionManager.frameTick`.
+    val frameTick by controller.frameTick.collectAsState()
+
     Box(modifier = Modifier.fillMaxSize()) {
         // `key(id)` makes each marker's animation state survive list
         // reorderings (the merge step in PeakFinder can shuffle
@@ -564,14 +574,18 @@ private fun ProjectedOverlay(
         // A plain `if (off != null)` does the same thing and dexes.
         peaks.forEach { peak ->
             key(peak.id) {
-                val off = ArProjection.projectGps(
-                    controller = controller,
-                    userLocation = userLocation,
-                    targetLat = peak.latitude,
-                    targetLon = peak.longitude,
-                    targetAlt = peak.altitude,
-                    observerAltitude = observerAltitude
-                )
+                // Keyed on frameTick so it re-projects once per frame, and only
+                // once per frame (rather than on every unrelated recomposition).
+                val off = remember(frameTick, peak.id, userLocation, observerAltitude) {
+                    ArProjection.projectGps(
+                        controller = controller,
+                        userLocation = userLocation,
+                        targetLat = peak.latitude,
+                        targetLon = peak.longitude,
+                        targetAlt = peak.altitude,
+                        observerAltitude = observerAltitude
+                    )
+                }
                 if (off != null) {
                     val opacity = (1.0 - (peak.distance / 50_000.0) * 0.5).coerceIn(0.5, 1.0).toFloat()
                     val scale = (1.0 - (peak.distance / 50_000.0) * 0.4).coerceIn(0.6, 1.0).toFloat()
@@ -616,37 +630,54 @@ private fun AnimatedMarker(
     }
 }
 
+/**
+ * Single peak marker. Kept visually in step with iOS `PeakMarkerView`: WHITE
+ * name (not orange), a dimmer "distance · altitude" detail line, a small orange
+ * down-triangle pointing at the summit, and a translucent-black card with a thin
+ * orange border. Uses the default (rounded-ish) system font rather than the old
+ * Monospace, closer to iOS's `.rounded` while staying Android-native. Distance
+ * and altitude use iOS's own m-below-1km / km-above formatting.
+ */
 @Composable
 private fun PeakMarker(peak: NearbyPeak, opacity: Float = 1f, scale: Float = 1f) {
+    val orange = Color(0xFFFF9800)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .background(
-                Color.Black.copy(alpha = 0.7f * opacity),
-                RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = (6 * scale).dp, vertical = (3 * scale).dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.6f * opacity))
+            .border(1.dp, orange.copy(alpha = 0.8f * opacity), RoundedCornerShape(8.dp))
+            .padding(horizontal = (8 * scale).dp, vertical = (5 * scale).dp)
     ) {
         Text(
             peak.name,
-            color = Color(0xFFFF9800).copy(alpha = opacity),
-            fontSize = (13 * scale).sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
-        )
-        Text(
-            "${String.format(Locale.US, "%.1f", peak.distance / 1000)} km · ${peak.altitude.toInt()} m",
             color = Color.White.copy(alpha = opacity),
-            fontSize = (10 * scale).sp,
-            fontFamily = FontFamily.Monospace
+            fontSize = (13 * scale).sp,
+            fontWeight = FontWeight.Bold
+        )
+        val detail = buildString {
+            append(formatMeters(peak.distance))
+            if (peak.altitude > 0) append(" · ").append(formatMeters(peak.altitude))
+        }
+        Text(
+            detail,
+            color = Color.White.copy(alpha = 0.85f * opacity),
+            fontSize = (11 * scale).sp,
+            fontWeight = FontWeight.Medium
         )
         Text(
             "▼",
-            color = Color(0xFFFF9800).copy(alpha = opacity),
+            color = orange.copy(alpha = opacity),
             fontSize = (8 * scale).sp
         )
     }
 }
+
+/** iOS `PeakMarkerView.formatDistance`/`formatAltitude`: whole metres below
+ *  1 km, one decimal of km above. */
+private fun formatMeters(meters: Double): String =
+    if (meters >= 1000) String.format(Locale.US, "%.1f km", meters / 1000)
+    else String.format(Locale.US, "%.0f m", meters)
 
 /**
  * Pre-AR splash. iOS wording: title is "About the Nature view"; the

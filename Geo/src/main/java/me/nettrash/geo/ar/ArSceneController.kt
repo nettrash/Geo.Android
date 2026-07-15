@@ -144,6 +144,36 @@ class ArSceneController {
     val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
 
     /**
+     * Bumped once per ARCore frame. Overlays collect this to force a
+     * recomposition every frame, so their projected content tracks the camera.
+     *
+     * Without it they'd only recompose when some *other* observed state changed:
+     * the camera matrices are read through `.value` (not collected), because
+     * collecting a `FloatArray` StateFlow re-emits on every new array anyway.
+     * The Nature overlays used to get their per-frame refresh by accident, from
+     * the diagnostic flows (wall distance, occluded ids) that ticked constantly;
+     * when those were deleted the markers started updating only at sensor pace,
+     * which read as markers jumping and blinking. This is the explicit version of
+     * that refresh, and mirrors iOS `ARSessionManager.frameTick`.
+     */
+    private val _frameTick = MutableStateFlow(0L)
+    val frameTick: StateFlow<Long> = _frameTick.asStateFlow()
+
+    /**
+     * How long `isTracking` stays true after ARCore stops reporting TRACKING.
+     *
+     * ARCore drops to PAUSED whenever it briefly loses visual features — which,
+     * on a tab whose whole job is pointing at distant mountains and open sky, is
+     * common and usually lasts only a few frames. `isTracking` is the single
+     * switch that hides the horizon line, the cardinal markers AND every peak
+     * marker, so reacting to each blip made the entire overlay flicker in and
+     * out. Holding it briefly keeps the overlay drawn at the last good pose (the
+     * matrices are left untouched while untracked) instead of blanking it.
+     */
+    private val trackingGraceMs = 800L
+    private var lastTrackedMs = 0L
+
+    /**
      * Distance (m) from the camera to whatever the centre of the
      * viewport is pointing at, derived via an ARCore hit-test on the
      * latest frame. `null` when no surface was detected.
@@ -259,9 +289,26 @@ class ArSceneController {
      */
     fun update(session: Session?, frame: Frame, viewportWidthPx: Int, viewportHeightPx: Int) {
         val cam = frame.camera
-        _isTracking.value = cam.trackingState == TrackingState.TRACKING
         _viewportSize.value = IntSize(viewportWidthPx, viewportHeightPx)
-        if (!_isTracking.value) return
+
+        val tracking = cam.trackingState == TrackingState.TRACKING
+        val nowMs0 = System.currentTimeMillis()
+        if (tracking) {
+            lastTrackedMs = nowMs0
+            _isTracking.value = true
+        } else {
+            // Hold the last good pose through a brief tracking blip rather than
+            // blanking the whole overlay — see `trackingGraceMs`. The matrices
+            // below are deliberately NOT overwritten while untracked, so the
+            // overlay keeps drawing at the last pose we trusted.
+            if (nowMs0 - lastTrackedMs > trackingGraceMs) _isTracking.value = false
+            // Still tick so overlays re-render (and settle) during the grace.
+            _frameTick.value += 1
+            return
+        }
+
+        // One tick per tracked frame — the overlays' per-frame refresh signal.
+        _frameTick.value += 1
 
         // 4×4 matrices, column-major in OpenGL — but ARCore's
         // getViewMatrix / getProjectionMatrix already returns column
