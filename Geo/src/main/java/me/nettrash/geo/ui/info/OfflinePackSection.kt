@@ -8,12 +8,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -53,6 +56,7 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
     val packs by viewModel.offlinePacks.collectAsState()
     val downloading by viewModel.offlinePackDownloading.collectAsState()
     val status by viewModel.offlinePackStatus.collectAsState()
+    val updatingId by viewModel.offlinePackUpdatingId.collectAsState()
     val location by viewModel.locationManager.location.collectAsState()
     var showManager by remember { mutableStateOf(false) }
 
@@ -88,7 +92,9 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
             downloading = downloading,
             status = status,
             hasLocation = location != null,
+            updatingId = updatingId,
             onDownload = { name, radius -> viewModel.downloadOfflinePack(name, radius) },
+            onUpdate = { viewModel.updateOfflinePack(it) },
             onDelete = { viewModel.deleteOfflinePack(it) },
             onRename = { pack, newName -> viewModel.renameOfflinePack(pack, newName) },
             onDismiss = { showManager = false }
@@ -102,7 +108,9 @@ private fun OfflinePackManagerDialog(
     downloading: Boolean,
     status: String,
     hasLocation: Boolean,
+    updatingId: String?,
     onDownload: (String, Double) -> Unit,
+    onUpdate: (OfflinePack) -> Unit,
     onDelete: (OfflinePack) -> Unit,
     onRename: (OfflinePack, String) -> Unit,
     onDismiss: () -> Unit
@@ -215,8 +223,23 @@ private fun OfflinePackManagerDialog(
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                if (updatingId == pack.id) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        color = ACCENT,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                TextButton(
+                                    onClick = { onUpdate(pack) },
+                                    enabled = !downloading
+                                ) {
+                                    Text(stringResource(R.string.action_update), color = ACCENT, fontSize = 12.sp)
+                                }
                                 TextButton(onClick = { renameText = pack.name; renamingPack = pack }) {
                                     Text(stringResource(R.string.action_rename), color = ACCENT, fontSize = 12.sp)
                                 }

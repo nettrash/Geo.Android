@@ -58,6 +58,11 @@ class OfflinePackRepository @Inject constructor(
     private val _statusText = MutableStateFlow("")
     val statusText: StateFlow<String> = _statusText.asStateFlow()
 
+    /** Id of the pack currently being re-downloaded by [updatePack], or null.
+     *  Lets the management list show a per-row spinner on exactly that pack. */
+    private val _updatingPackId = MutableStateFlow<String?>(null)
+    val updatingPackId: StateFlow<String?> = _updatingPackId.asStateFlow()
+
     /** Union of every pack's peaks, deduped — handed to [PeakFinder] so the
      *  area's peaks show offline. Distance/bearing are placeholders;
      *  PeakFinder recomputes them against the live location on merge. */
@@ -120,6 +125,42 @@ class OfflinePackRepository @Inject constructor(
             _isDownloading.value = false
             _statusText.value = ""
             _progress.value = 0f
+        }
+    }
+
+    /**
+     * Re-fetch a saved pack's peaks for its ORIGINAL centre + radius and replace
+     * its stored data in place (same id / name / created date). Use it to pick up
+     * new OpenStreetMap peaks, or to complete a download that was partial.
+     *
+     * A failed or empty fetch (offline, Overpass down) is IGNORED — an empty
+     * result almost always means the request didn't get through, not that a
+     * once-populated area is suddenly peakless, so an update attempt can never
+     * wipe a good pack. Mirrors iOS `OfflinePackManager.updatePack`.
+     */
+    suspend fun updatePack(pack: OfflinePack) {
+        if (!_isDownloading.compareAndSet(expect = false, update = true)) return
+        _updatingPackId.value = pack.id
+        _statusText.value = "Updating…"
+        try {
+            val osm = peakFinder.fetchPeaksForArea(pack.centerLat, pack.centerLon, pack.radiusKm * 1000.0)
+            val peaks = osm.sortedBy { it.distance }.take(maxPackPeaks)
+            if (peaks.isEmpty()) return   // never overwrite a good pack with nothing
+
+            val saved = store.saveData(
+                pack.id,
+                OfflinePackData(peaks = peaks.map { PackPeak(it.name, it.latitude, it.longitude, it.altitude) })
+            )
+            if (!saved) return
+            val updated = _packs.value.map {
+                if (it.id == pack.id) it.copy(peakCount = peaks.size) else it
+            }
+            store.saveIndex(updated)
+            reseed()
+        } finally {
+            _isDownloading.value = false
+            _updatingPackId.value = null
+            _statusText.value = ""
         }
     }
 

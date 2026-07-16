@@ -348,6 +348,9 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 },
                 confirmButton = {
                     Row {
+                        TextButton(onClick = { viewModel.updateOfflinePack(pack); selectedPack = null }) {
+                            Text(stringResource(R.string.action_update), color = OFFLINE_ACCENT)
+                        }
                         TextButton(onClick = {
                             nameText = pack.name
                             nameAction = MapNameAction.Rename(pack)

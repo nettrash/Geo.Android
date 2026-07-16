@@ -551,6 +551,7 @@ class GeoViewModel @Inject constructor(
     val offlinePackDownloading: StateFlow<Boolean> = offlinePackRepository.isDownloading
     val offlinePackProgress: StateFlow<Float> = offlinePackRepository.progress
     val offlinePackStatus: StateFlow<String> = offlinePackRepository.statusText
+    val offlinePackUpdatingId: StateFlow<String?> = offlinePackRepository.updatingPackId
 
     /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
     fun downloadOfflinePack(name: String, radiusKm: Double) {
@@ -574,6 +575,15 @@ class GeoViewModel @Inject constructor(
     }
 
     fun renameOfflinePack(pack: OfflinePack, newName: String) = offlinePackRepository.rename(pack, newName)
+
+    /** Re-download a saved pack's peaks in place (same area) to pick up new
+     *  OpenStreetMap data. Off the Main dispatcher — the merge runs on the caller
+     *  thread (network calls re-dispatch to IO themselves). */
+    fun updateOfflinePack(pack: OfflinePack) {
+        viewModelScope.launch(Dispatchers.Default) {
+            offlinePackRepository.updatePack(pack)
+        }
+    }
 
     private fun updateWidget() {
         // Throttled push — see WidgetUpdater.pushThrottled for the

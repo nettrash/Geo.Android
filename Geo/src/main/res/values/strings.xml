@@ -89,6 +89,7 @@
     <string name="action_delete">Delete</string>
     <string name="action_done">Done</string>
     <string name="action_rename">Rename</string>
+    <string name="action_update">Update</string>
     <string name="action_clear_history">Clear history</string>
     <string name="clear_history_title">Clear history?</string>
     <string name="clear_history_message">This permanently deletes all recorded history and cannot be undone.</string>
