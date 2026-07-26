@@ -8,12 +8,12 @@ one recorded here.
 
 ## [Unreleased]
 
-## [1.3] — 2026-07-25
+## [1.2] — 2026-07-26
 
-A new **Magnetic Conditions** card on the Info tab: what a geomagnetic storm
-is doing to your compass, to your GPS, and to your chances of seeing the
-aurora from exactly where you're standing — plus optional aurora alerts that
-stay off until you ask for them.
+A Nature-view rebuild focused on one thing — naming the peaks you can see — a
+new **Magnetic Conditions** card telling you what a geomagnetic storm is doing
+to your compass, to your GPS and to your chances of seeing the aurora from
+exactly where you're standing, plus a Stats-tab tracking fix.
 
 ### Added
 - **Magnetic Conditions.** A new Info-tab card reads the planetary K index
@@ -49,35 +49,6 @@ stay off until you ask for them.
   cloud, light pollution, terrain and the timing of substorms. Treat the Kp
   figure as give or take one step.
 
-### Changed
-- **The peak-bearing arrow now says when a storm is working against it.** At
-  G3 and above, the closest- and highest-mountain cards add a line under the
-  existing calibrate-compass hint with roughly how much extra heading error
-  the storm is worth at your magnetic latitude — and the reminder that your
-  compass's own error is larger than that.
-- **Data sources credit** now names NOAA SWPC (public domain) and the IGRF-14
-  and AACGM-v2 magnetic coordinate models.
-
-## [1.2] — 2026-07-16
-
-A Nature-view rebuild focused on one thing — naming the peaks you can see —
-plus a Stats-tab tracking fix.
-
-### Changed
-- **The Nature (AR) view is now built around identifying the peaks you can
-  see, and nothing else.** The modelled terrain "skyline" silhouette from 1.1
-  was removed: on camera it rarely lined up with the real ridge, which made
-  the view feel unfinished. In its place the camera shows a clean geometric
-  horizon with N / NE / E / SE / S / SW / W / NW compass markers, and every
-  nearby summit gets its own label — clearer, and far more reliable at
-  pointing you at the right mountain. The extra AR machinery that served the
-  skyline (occlusion, scanning, depth) is gone too, which is easier on the
-  battery.
-- **New peak labels.** Each peak is marked by a thin line rising from its
-  exact summit to a small tilted card with the mountain's name and altitude,
-  so the label points at the peak without covering it.
-
-### Added
 - **Only the peaks you can actually see.** Summits hidden below your horizon
   (behind the curve of the Earth from where you're standing) are no longer
   labelled, so the view isn't cluttered with peaks you couldn't possibly see.
