@@ -1,0 +1,24 @@
+<!--
+    Status-bar icon for the opt-in aurora alert (Phase 2).
+    Three stacked wave bands — an aurora curtain — white on transparent,
+    as required for notification small-icons (the system tints/masks it).
+    Deliberately nothing like ic_stat_storm's falling-trend arrow: the two
+    alerts post on different channels for different reasons, and in a
+    crowded shade they must not be mistaken for one another.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M4,4.9c2.5,-3 5.5,-3 8,0s5.5,3 8,0v2.2c-2.5,3 -5.5,3 -8,0s-5.5,-3 -8,0z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M4,10.9c2.5,-3 5.5,-3 8,0s5.5,3 8,0v2.2c-2.5,3 -5.5,3 -8,0s-5.5,-3 -8,0z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M4,16.9c2.5,-3 5.5,-3 8,0s5.5,3 8,0v2.2c-2.5,3 -5.5,3 -8,0s-5.5,-3 -8,0z" />
+</vector>

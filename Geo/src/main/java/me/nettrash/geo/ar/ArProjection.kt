@@ -28,12 +28,11 @@ object ArProjection {
     /**
      * Project a target GPS coordinate to a viewport offset.
      *
-     * [observerAltitude] is the DEM-anchored observer altitude the
-     * skyline was computed with ([SkylineCalculator.observerAltitudeUsed]
-     * threaded through the caller) — the ONE altitude every AR consumer
-     * shares so markers can't vertically detach from the drawn
-     * silhouette; `null` falls back to the GPS altitude (mirrors iOS
-     * `PeakOverlayView`'s `observerAltitude ?? userLoc.altitude`).
+     * [observerAltitude] is the barometer-preferred observer altitude (else GPS)
+     * — the ONE altitude the horizon line, the peak markers and the tap hit-test
+     * all share so they can't vertically detach from each other; `null` falls
+     * back to the GPS altitude (mirrors iOS `PeakOverlayView`'s
+     * `observerAltitude ?? userLoc.altitude`).
      *
      * Returns `null` if the camera isn't tracking, the point is
      * behind the camera, or it falls more than [margin] pixels

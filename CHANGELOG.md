@@ -8,7 +8,57 @@ one recorded here.
 
 ## [Unreleased]
 
-## [1.2] — 2026-07-15
+## [1.3] — 2026-07-25
+
+A new **Magnetic Conditions** card on the Info tab: what a geomagnetic storm
+is doing to your compass, to your GPS, and to your chances of seeing the
+aurora from exactly where you're standing — plus optional aurora alerts that
+stay off until you ask for them.
+
+### Added
+- **Magnetic Conditions.** A new Info-tab card reads the planetary K index
+  published by NOAA's Space Weather Prediction Center and turns that one
+  global number into a statement about *your* position: the storm level on the
+  G scale, how far a storm can push your compass heading beyond its normal
+  error, whether GPS may degrade where you are, and whether the auroral oval
+  reaches you tonight. **Space weather without telling anyone where you are.**
+  The request is a fixed URL with no parameters — no coordinates, no
+  identifiers, nothing about you at all — and everything local is worked out
+  on the phone from that single number. The Kp figure comes from NOAA's ground
+  observatory network, not from this device; Geo is not affiliated with, or
+  endorsed by, NOAA.
+- **Your magnetic latitude, and what the aurora needs to reach it.** The card
+  shows the magnetic latitude of where you are and the Kp the aurora would
+  need to become visible from it ("needs about Kp 5+"), with tonight's
+  darkness window and the bearing to look along. A bundled 4,680-byte
+  correction grid — byte-identical to the one in the iOS app — means that
+  latitude is the real one rather than the tilted-dipole approximation, which
+  reads about 5° too optimistic across Britain, Iceland and western Europe;
+  five degrees being two and a half whole Kp steps of false hope.
+- **The card degrades instead of disappearing.** With no signal and no recent
+  forecast it keeps the half that never needed the network — magnetic
+  latitude, the Kp threshold, the darkness window, the bearing — and says
+  plainly that it has no space-weather data rather than showing a spinner.
+- **Aurora alerts, off by default.** The "What this means" dialog carries a
+  switch for a notification on nights when the aurora could be visible from
+  your location. No background work is scheduled until you turn it on, and it
+  is capped at one alert a night.
+- **"What this means".** An explainer on what a storm actually does to a
+  compass and to GPS, why local iron — ore bodies, vehicles, rebar, a case
+  magnet — routinely beats any storm, and what the aurora rule leaves out:
+  cloud, light pollution, terrain and the timing of substorms. Treat the Kp
+  figure as give or take one step.
+
+### Changed
+- **The peak-bearing arrow now says when a storm is working against it.** At
+  G3 and above, the closest- and highest-mountain cards add a line under the
+  existing calibrate-compass hint with roughly how much extra heading error
+  the storm is worth at your magnetic latitude — and the reminder that your
+  compass's own error is larger than that.
+- **Data sources credit** now names NOAA SWPC (public domain) and the IGRF-14
+  and AACGM-v2 magnetic coordinate models.
+
+## [1.2] — 2026-07-16
 
 A Nature-view rebuild focused on one thing — naming the peaks you can see —
 plus a Stats-tab tracking fix.
@@ -48,6 +98,19 @@ plus a Stats-tab tracking fix.
   adjustment ("Alignment +4°"); tap it to reset. Lasts for the session.
 
 ### Fixed
+- **A peak's name card can no longer detach from its line.** Each marker —
+  summit dot, line and tilted name card — is now drawn as a single figure, so
+  rotating the phone moves them as one instead of briefly tearing the card
+  away from its line during the rotation.
+- **The camera view no longer locks onto a disturbed compass.** Holding the
+  phone next to a magnet (another phone's MagSafe ring, a magnetic mount or
+  case) can flip the compass by up to 180° while the phone is upright — which
+  could pin the N/S markers to the wrong side of the sky for the whole
+  session. The camera view now ignores compass readings the sensor itself
+  flags as unreliable (keeping its last good alignment and showing the
+  "calibrate compass" hint instead), re-locks within a second once the
+  reading recovers, and its heading readout now shows the true (declination-
+  corrected) heading, matching iOS.
 - **The altitude graph keeps tracking when GPS drops.** On the Stats tab, the
   barometer trace on the live tracking graph now keeps going when GPS is
   unavailable (indoors, or before the first fix) instead of freezing; the GPS

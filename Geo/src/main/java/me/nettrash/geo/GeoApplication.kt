@@ -8,11 +8,14 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import me.nettrash.geo.location.LocationManager
+import me.nettrash.geo.notification.AuroraNotifier
 import me.nettrash.geo.notification.StormNotifier
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.util.AppLog
+import me.nettrash.geo.util.AuroraAlertStore
 import me.nettrash.geo.widget.WidgetUpdater
 import me.nettrash.geo.worker.BarometerRefreshWorker
+import me.nettrash.geo.worker.SpaceWeatherWorker
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -35,11 +38,26 @@ class GeoApplication : Application(), Configuration.Provider {
         // storm warning (M5a) has somewhere to post on Android 8+.
         StormNotifier.ensureChannel(this)
 
+        // The aurora alert gets its OWN channel, created here too even
+        // though the feature is off by default: a user who never turns it
+        // on sees a channel they can pre-mute, and one who does turn it on
+        // can silence aurora pings without losing pressure warnings.
+        AuroraNotifier.ensureChannel(this)
+
         // Mirrors iOS GeoAppDelegate.registerBackgroundTasks() —
         // schedule the periodic barometer sample at process start so
         // the widget keeps refreshing even when the user hasn't
         // recently opened the foreground app.
         BarometerRefreshWorker.schedule(this)
+
+        // The space-weather refresh, by contrast, is scheduled ONLY once
+        // the user has asked for aurora alerts — which is what lets the
+        // privacy policy say that background network activity never
+        // happens until you ask for it, and keeps a default install doing
+        // exactly what it did before this feature existed. Re-applied on
+        // every process start so an install that opted out while the app
+        // was not running still stops ticking.
+        SpaceWeatherWorker.applyOptIn(this, AuroraAlertStore(this).isEnabled())
 
         // Mirrors iOS applicationWillResignActive: push the latest
         // snapshot + force a widget reload as soon as the process

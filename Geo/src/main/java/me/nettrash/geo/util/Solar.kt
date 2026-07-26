@@ -33,6 +33,18 @@ object Solar {
     const val GOLDEN_LOWER_ELEVATION = -4.0
     const val GOLDEN_UPPER_ELEVATION = 6.0
 
+    /** Sun centre 12° below the horizon — the nautical/astronomical
+     *  boundary, and the outer edge of the aurora-watching window used by
+     *  [Geomagnetic]. Above this the residual twilight washes out a low
+     *  arc. Mirrored as `Geomagnetic.DARK_ELEVATION_DEG` so the shared
+     *  constant block reads as one block on both platforms. */
+    const val ASTRO_DARK_ELEVATION_DEG = -12.0
+    /** Sun centre 18° below the horizon — no residual twilight anywhere in
+     *  the sky. Reported as the "ideal" sub-window, and nullable on
+     *  purpose: above ~48.6° of latitude the midsummer sun never gets that
+     *  low, so there are nights with a −12° window and no −18° one. */
+    const val IDEAL_DARK_ELEVATION_DEG = -18.0
+
     private const val DEG = 180.0 / Math.PI
     private const val RAD = Math.PI / 180.0
 
@@ -197,6 +209,131 @@ object Solar {
             noonElevationDeg = noonElev,
             isPolarDay = polarDay,
             isPolarNight = polarNight
+        )
+    }
+
+    /**
+     * The dark part of ONE night, as absolute instants. [start] falls on
+     * the evening of day D and [end] on the morning of day D+1 — the
+     * window ALWAYS spans local midnight. Treating it as a single-day
+     * interval is the classic bug in this kind of code (you get an empty
+     * or inverted window every night of the year), so it has its own named
+     * test on both platforms.
+     *
+     * [idealStart]/[idealEnd] bound the −18° sub-window and are null
+     * TOGETHER whenever the sun never gets that low.
+     */
+    data class NightWindow(
+        val start: Long,
+        val end: Long,
+        val idealStart: Long?,
+        val idealEnd: Long?
+    )
+
+    /** UTC calendar date the solar-event formulae are evaluated for, plus
+     *  that date's 00:00 UTC instant — the base the `…UtcMinutes` results
+     *  are offsets from. */
+    private class SolarDate(val year: Int, val month: Int, val day: Int, val utcMidnightMs: Long)
+
+    /** UTC date (and its midnight) containing [instantMs]. Callers pass
+     *  LOCAL noon, exactly as [times] does, so a far-east clock zone
+     *  (UTC+13/+14) doesn't shift the whole night onto the wrong date. */
+    private fun solarDate(instantMs: Long): SolarDate {
+        val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        utc.timeInMillis = instantMs
+        val year = utc.get(Calendar.YEAR)
+        val month = utc.get(Calendar.MONTH) + 1
+        val day = utc.get(Calendar.DAY_OF_MONTH)
+        utc.clear()
+        utc.set(year, month - 1, day, 0, 0, 0)
+        return SolarDate(year, month, day, utc.timeInMillis)
+    }
+
+    /** Local 12:00 of the day containing [instantMs] in [timeZone]. */
+    private fun localNoon(instantMs: Long, timeZone: TimeZone): Calendar {
+        val c = Calendar.getInstance(timeZone)
+        c.timeInMillis = instantMs
+        c.set(Calendar.HOUR_OF_DAY, 12)
+        c.set(Calendar.MINUTE, 0)
+        c.set(Calendar.SECOND, 0)
+        c.set(Calendar.MILLISECOND, 0)
+        return c
+    }
+
+    /** Absolute instant of a `…UtcMinutes` result on [date], or null.
+     *  Non-finite minutes are rejected here: within a hair of the
+     *  geographic poles `cos(latitude)` underflows and [eventUtcMinutes]
+     *  divides by ~0, producing a NaN that slips past its own ±1 domain
+     *  check (NaN compares false against everything). Better no window
+     *  than an instant in the year 292 million. */
+    private fun instant(date: SolarDate, minutes: Double?): Long? {
+        if (minutes == null || !minutes.isFinite()) return null
+        return date.utcMidnightMs + (minutes * 60_000.0).toLong()
+    }
+
+    /**
+     * The dark window that follows the local noon of [dayMs]'s day, or
+     * null when the sun never drops to [ASTRO_DARK_ELEVATION_DEG] between
+     * the two noons (an arctic summer night, which is not a dark one).
+     *
+     * [timeZone] is INJECTED rather than read from the device so the
+     * result is deterministic under test — the aurora window is one of
+     * the few places where an off-by-one day is invisible in the UI but
+     * silently wrong.
+     *
+     * This answers for ONE night. Which night matters right now, and how
+     * far to search when none of them is dark, belong to the aurora card
+     * and live in [Geomagnetic.darkWindow] / [Geomagnetic.nextDarkness] —
+     * exactly where iOS keeps them.
+     */
+    fun nightWindow(
+        dayMs: Long,
+        latitude: Double,
+        longitude: Double,
+        timeZone: TimeZone
+    ): NightWindow? {
+        val noon = localNoon(dayMs, timeZone)
+        val eveningNoonMs = noon.timeInMillis
+        noon.add(Calendar.DAY_OF_YEAR, 1)   // Calendar.add, so a DST day is still one day
+        val morningNoonMs = noon.timeInMillis
+
+        val evening = solarDate(eveningNoonMs)
+        val morning = solarDate(morningNoonMs)
+
+        fun dusk(elevationDeg: Double): Long? = instant(
+            evening,
+            eventUtcMinutes(evening.year, evening.month, evening.day, latitude, longitude, elevationDeg, false)
+        )
+        fun dawn(elevationDeg: Double): Long? = instant(
+            morning,
+            eventUtcMinutes(morning.year, morning.month, morning.day, latitude, longitude, elevationDeg, true)
+        )
+        // A missing crossing means one of two OPPOSITE things: polar day
+        // (the sun never dips that low) or continuous darkness (it never
+        // climbs that high, e.g. 80 °N in December, where noon peaks at
+        // −13.4°). Solar noon elevation is what tells them apart — the
+        // same discriminator [times] uses for isPolarDay/isPolarNight.
+        // Without this branch Ny-Ålesund reports "no darkness" all winter.
+        fun darkAllDay(date: SolarDate, elevationDeg: Double): Boolean =
+            noonElevationDeg(date.year, date.month, date.day, latitude, longitude) <= elevationDeg
+
+        val start = dusk(ASTRO_DARK_ELEVATION_DEG)
+            ?: if (darkAllDay(evening, ASTRO_DARK_ELEVATION_DEG)) eveningNoonMs else return null
+        val end = dawn(ASTRO_DARK_ELEVATION_DEG)
+            ?: if (darkAllDay(morning, ASTRO_DARK_ELEVATION_DEG)) morningNoonMs else return null
+        if (end <= start) return null
+
+        val idealStart = dusk(IDEAL_DARK_ELEVATION_DEG)
+            ?: if (darkAllDay(evening, IDEAL_DARK_ELEVATION_DEG)) eveningNoonMs else null
+        val idealEnd = dawn(IDEAL_DARK_ELEVATION_DEG)
+            ?: if (darkAllDay(morning, IDEAL_DARK_ELEVATION_DEG)) morningNoonMs else null
+        val hasIdeal = idealStart != null && idealEnd != null
+
+        return NightWindow(
+            start = start,
+            end = end,
+            idealStart = if (hasIdeal) idealStart else null,
+            idealEnd = if (hasIdeal) idealEnd else null
         )
     }
 }

@@ -51,10 +51,6 @@ class OfflinePackRepository @Inject constructor(
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
 
-    /** 0…1 across the DEM prefetch (the long phase). */
-    private val _progress = MutableStateFlow(0f)
-    val progress: StateFlow<Float> = _progress.asStateFlow()
-
     private val _statusText = MutableStateFlow("")
     val statusText: StateFlow<String> = _statusText.asStateFlow()
 
@@ -75,13 +71,12 @@ class OfflinePackRepository @Inject constructor(
 
     /**
      * Prefetch and persist a pack centred on (lat, lon) out to [radiusKm].
-     * No-ops if a download is already running; publishes progress as it goes.
+     * No-ops if a download is already running.
      */
     suspend fun createPack(name: String, centerLat: Double, centerLon: Double, radiusKm: Double) {
         // Atomic check-then-set so a double-tap (or a caller on a multi-threaded
         // dispatcher) can't slip two concurrent downloads past a plain read+write.
         if (!_isDownloading.compareAndSet(expect = false, update = true)) return
-        _progress.value = 0f
         _statusText.value = "Finding peaks…"
         try {
             // 1. Peaks across the whole radius (one throttled Overpass query).
@@ -124,7 +119,6 @@ class OfflinePackRepository @Inject constructor(
         } finally {
             _isDownloading.value = false
             _statusText.value = ""
-            _progress.value = 0f
         }
     }
 

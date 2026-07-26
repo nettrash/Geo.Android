@@ -37,9 +37,11 @@ import me.nettrash.geo.sensor.PressureTrend
 import me.nettrash.geo.sensor.StormWarning
 import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.GeoCalculations
+import me.nettrash.geo.util.MagneticConditions
 import me.nettrash.geo.util.MountainLoader
 import me.nettrash.geo.util.PeakFinder
 import me.nettrash.geo.util.QnhRepository
+import me.nettrash.geo.util.SpaceWeatherRepository
 import me.nettrash.geo.util.TripRecordingStore
 import me.nettrash.geo.widget.WidgetUpdater
 import javax.inject.Inject
@@ -55,7 +57,8 @@ class GeoViewModel @Inject constructor(
     private val mountainLoader: MountainLoader,
     private val peakFinder: PeakFinder,
     private val widgetUpdater: WidgetUpdater,
-    private val offlinePackRepository: OfflinePackRepository
+    private val offlinePackRepository: OfflinePackRepository,
+    private val spaceWeatherRepository: SpaceWeatherRepository
 ) : ViewModel() {
 
     // Mountain data
@@ -198,6 +201,13 @@ class GeoViewModel @Inject constructor(
         }
             .distinctUntilChanged { a, b -> summitKey(a) == summitKey(b) }
             .onEach { peak -> evaluateSummitCandidate(peak) }
+            .launchIn(viewModelScope)
+
+        // Feed fixes to the magnetic card. The repository itself ignores a
+        // move too small to change the readout, so this stays a plain
+        // hand-off rather than a second throttle to keep in sync.
+        locationManager.location
+            .onEach { spaceWeatherRepository.updatePosition(it) }
             .launchIn(viewModelScope)
 
         // Load initial history
@@ -544,21 +554,20 @@ class GeoViewModel @Inject constructor(
     }
 
     // ─── Offline expedition pack ──────────────────────────────────────
-    // Pre-cached area (OSM peaks + terrain DEM) so AR/skyline survive a
-    // no-signal summit. The repository seeds the live peak/elevation caches
-    // at launch; these just surface its state + actions to the Info screen.
+    // Pre-cached area (named OSM peaks) so the Nature view can label peaks on a
+    // no-signal summit. The repository seeds the live peak cache at launch;
+    // these just surface its state + actions to the Info screen.
     val offlinePacks: StateFlow<List<OfflinePack>> = offlinePackRepository.packs
     val offlinePackDownloading: StateFlow<Boolean> = offlinePackRepository.isDownloading
-    val offlinePackProgress: StateFlow<Float> = offlinePackRepository.progress
     val offlinePackStatus: StateFlow<String> = offlinePackRepository.statusText
     val offlinePackUpdatingId: StateFlow<String?> = offlinePackRepository.updatingPackId
 
     /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
     fun downloadOfflinePack(name: String, radiusKm: Double) {
         val loc = locationManager.location.value ?: return
-        // Off the Main dispatcher: createPack builds the ~3600-point skyline grid
-        // and merges results on the caller thread (the network calls re-dispatch
-        // to IO themselves), so keep that CPU work off the UI thread.
+        // Off the Main dispatcher: createPack merges/dedupes peaks on the caller
+        // thread (the network calls re-dispatch to IO themselves), so keep that
+        // CPU work off the UI thread.
         viewModelScope.launch(Dispatchers.Default) {
             offlinePackRepository.createPack(name, loc.latitude, loc.longitude, radiusKm)
         }
@@ -584,6 +593,18 @@ class GeoViewModel @Inject constructor(
             offlinePackRepository.updatePack(pack)
         }
     }
+
+    // ─── Magnetic conditions ──────────────────────────────────────────
+    // One global number from NOAA SWPC, resolved against this position by
+    // the pure `Geomagnetic` core. Pass-throughs only — the repository owns
+    // the fetch throttle, the cache and the correction grid.
+    val magneticConditions: StateFlow<MagneticConditions> = spaceWeatherRepository.conditions
+    val spaceWeatherChecking: StateFlow<Boolean> = spaceWeatherRepository.isRefreshing
+
+    /** Fetch the planetary K index unless we already did inside this
+     *  3-hour bin. Driven from the Info tab's ON_RESUME, never from a bare
+     *  `LaunchedEffect` — see the comment on that observer. */
+    fun refreshSpaceWeather() = spaceWeatherRepository.refreshIfStale()
 
     private fun updateWidget() {
         // Throttled push — see WidgetUpdater.pushThrottled for the

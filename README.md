@@ -4,14 +4,14 @@
 
 Android + Wear OS app for tracking your geographical state in real time: GPS coordinates, satellite (GPS) altitude, barometric altitude, atmospheric pressure, and an augmented-reality view of nearby mountain peaks. It is the Android port of the iOS [Geo](https://github.com/nettrash/Geo) app and shares its data formats and calculations.
 
-All sensor history stays on your device. There are no analytics, no accounts, no servers operated by us. The only outbound calls are to public elevation/peak/QNH services (OpenStreetMap Overpass, Open-Elevation, Open-Meteo), and your coordinates are quantised to a ~110 m grid before any request.
+All sensor history stays on your device. There are no analytics, no accounts, no servers operated by us. The only outbound calls are to public peak/elevation/QNH services (OpenStreetMap Overpass, Open-Meteo) and to NOAA SWPC for the planetary K index — a fixed URL with no parameters, carrying nothing about you. Your coordinates are quantised to a ~110 m grid before any peak, elevation or QNH request, and are not part of the NOAA request at all.
 
 ## Features
 
 - **Info** — current coordinates, satellite altitude, barometer altitude, pressure and "% Everest". When the altitude is the weather-biased pressure estimate rather than the QNH-calibrated value, a **calibrating… / uncalibrated** cue says so.
 - **Stat** — on-device history of pressure and altitude, plotted over time (anchored to a rolling 30-day window). Old points are auto-pruned and a **Clear history** action wipes it on demand.
 - **Map** — your position on a Google Map with pins for nearby peaks, history points, the Seven Summits and the Snow Leopard peaks.
-- **Nature** — AR view (ARCore) that overlays the names of nearby mountain peaks on the camera feed, draws a terrain-aware skyline, and lists "Nearby" peaks with distance, bearing and elevation. Peak data comes from the OpenStreetMap Overpass API and elevations from Open-Elevation; the elevation cache is persisted on-device, so the skyline reappears instantly on a return visit and works offline.
+- **Nature** — AR view (ARCore) that overlays the names of nearby mountain peaks on the camera feed against a horizon line with cardinal (N/E/S/W) markers, showing only the summits actually above your horizon. A min-altitude slider hides smaller hills, and a shutter button captures the labelled view. Peak data comes from the OpenStreetMap Overpass API and ground elevations from Open-Meteo; downloaded offline packs let peaks appear out to ~80 km with no signal.
 - **Wear OS companion** — barometer-driven altitude (calibrated against the phone's reference) with its own on-device history, plus a glanceable tile.
 - **Home-screen widget** — current altitude and pressure at a glance, with a staleness cue and a "no data" state on first run.
 

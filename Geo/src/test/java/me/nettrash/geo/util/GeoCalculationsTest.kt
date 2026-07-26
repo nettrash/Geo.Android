@@ -123,39 +123,6 @@ class GeoCalculationsTest {
         assertThat(enu.up).isWithin(0.001).of(100.0)
     }
 
-    // ─── DEM-anchored observer altitude — mirrors iOS GeometryTests ──
-
-    @Test fun effectiveObserverAltitudeOnGroundSnapsToDEMEye() {
-        // Sensor within ±10 m of DEM ground + 1.7 m eye height → snap to
-        // the DEM-consistent eye altitude: self-consistency with the
-        // terrain being drawn beats sensor noise.
-        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 505.0, demGround = 500.0))
-            .isWithin(1e-9).of(501.7)
-        // Boundary: exactly at the +10 m tolerance edge still snaps.
-        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 511.7, demGround = 500.0))
-            .isWithin(1e-9).of(501.7)
-    }
-
-    @Test fun effectiveObserverAltitudeElevatedKeepsSensor() {
-        // More than 10 m ABOVE DEM + eye height → the user is genuinely
-        // elevated (tower, cable car, aircraft): keep the sensor value.
-        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 560.0, demGround = 500.0))
-            .isWithin(1e-9).of(560.0)
-    }
-
-    @Test fun effectiveObserverAltitudeUndergroundSnapsToDEMEye() {
-        // More than 10 m BELOW DEM ground is impossible (sensor drift) →
-        // snap to DEM + eye height.
-        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 480.0, demGround = 500.0))
-            .isWithin(1e-9).of(501.7)
-    }
-
-    @Test fun effectiveObserverAltitudeNoDEMFallsBackToSensor() {
-        // No DEM value → current behaviour: the (baro-preferred, else GPS)
-        // sensor value passes through unchanged.
-        assertThat(GeoCalculations.effectiveObserverAltitude(sensor = 480.0, demGround = null))
-            .isWithin(1e-9).of(480.0)
-    }
 
     // ─── Manual compass alignment (ENU rotation + pan conversion) ────
     //     Mirrors iOS GeometryTests.

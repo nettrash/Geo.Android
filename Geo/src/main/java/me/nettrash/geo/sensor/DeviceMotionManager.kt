@@ -40,7 +40,11 @@ class DeviceMotionManager @Inject constructor(
      * well-conditioned while the phone is vertical. Magnetic; callers add the local
      * declination for a true heading, exactly as they do with [heading].
      */
-    private val _cameraHeading = MutableStateFlow(0f)
+    // NaN (not 0) until the first sensor sample: 0 is a real bearing (due
+    // north), and the AR view pushes this value into ArSceneController, whose
+    // NaN gate exists precisely so no true-north offset can be latched from a
+    // fabricated heading before the sensor has spoken.
+    private val _cameraHeading = MutableStateFlow(Float.NaN)
     val cameraHeading: StateFlow<Float> = _cameraHeading.asStateFlow()
 
     private val _pitch = MutableStateFlow(0f)
@@ -130,6 +134,21 @@ class DeviceMotionManager @Inject constructor(
             ).toFloat()
             if (camAzimuth < 0) camAzimuth += 360f
             _cameraHeading.value = (Math.round(camAzimuth) % 360).toFloat()
+
+            // Mirror the per-event accuracy too: the framework fires
+            // onAccuracyChanged only when accuracy CHANGES from a
+            // per-registration cache that starts at 0 (UNRELIABLE) — so a
+            // sensor that is UNRELIABLE from its very first sample never
+            // fires the callback and the optimistic HIGH default would stand,
+            // silently defeating the AR view's compass-health gate in exactly
+            // the strong-magnet-already-present scenario it exists for. With
+            // this, the HIGH default only spans the pre-first-sample window,
+            // where the NaN heading already gates consumers. The >= 0 guard
+            // matches the framework's own filter: negative statuses
+            // (SENSOR_STATUS_NO_CONTACT, unset HAL fields) are junk, not a
+            // verdict on the compass — latching them would disable the gate
+            // (and pin the calibrate hint) on a perfectly healthy sensor.
+            if (event.accuracy >= 0) _headingAccuracy.value = event.accuracy
         }
     }
 

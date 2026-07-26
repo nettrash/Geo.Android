@@ -26,6 +26,7 @@
     <string name="section_tracking">TRACKING</string>
     <string name="section_statistics">STATISTICS</string>
     <string name="section_solar">S U N</string>
+    <string name="section_magnetic">M A G N E T I C</string>
 
     <!-- Coordinate unit suffixes (standard lat/lon abbreviations) -->
     <string name="unit_latitude">lat</string>
@@ -70,6 +71,130 @@
     <string name="solar_waiting">Waiting for location…</string>
     <string name="solar_sun_up">Sun up all day</string>
     <string name="solar_polar_night">Polar night</string>
+
+    <!--
+        Magnetic conditions (mirror iOS Localizable.strings geomag_* keys).
+
+        Wording rules that are part of the feature, not style preferences:
+        the card never claims the phone found a storm, never renders a Kp
+        threshold as a decimal (Kp lives on thirds — "about Kp 5+"), never
+        puts a brightness adjective on an aurora verdict, and never quotes
+        a GPS error in metres. See the honesty contract atop Geomagnetic.kt.
+    -->
+    <string name="field_geomag_field">Field</string>
+    <string name="field_geomag_compass">Compass</string>
+    <string name="field_geomag_gps">GPS</string>
+    <string name="field_geomag_aurora">Aurora</string>
+    <string name="field_geomag_mlat">Magnetic lat</string>
+
+    <!-- Field row: "Kp 5.7 · G1 Minor" / "Kp 1.7 · below storm levels" -->
+    <string name="geomag_field_value">Kp %1$s · %2$s</string>
+    <string name="geomag_g0">below storm levels</string>
+    <string name="geomag_g1">G1 Minor</string>
+    <string name="geomag_g2">G2 Moderate</string>
+    <string name="geomag_g3">G3 Strong</string>
+    <string name="geomag_g4">G4 Severe</string>
+    <string name="geomag_g5">G5 Extreme</string>
+    <!-- Provenance is NOAA's own tag for the bin, carried through as-is. -->
+    <string name="geomag_provenance_observed">observed</string>
+    <string name="geomag_provenance_estimated">estimated</string>
+    <string name="geomag_provenance_predicted">forecast</string>
+    <string name="geomag_field_caption">%1$s, %2$s</string>
+    <!-- The bin's own 3-hour UT span, e.g. "21-00 UT". -->
+    <string name="geomag_bin_span">%1$02d–%2$02d UT</string>
+
+    <!-- Compass row: banded, never a decimal. -->
+    <string name="geomag_compass_normal">Normal</string>
+    <string name="geomag_compass_under_one">Storm adds under 1° here</string>
+    <string name="geomag_compass_one_to_two">Storm adds 1–2° here</string>
+    <string name="geomag_compass_two_to_five">Storm adds 2–5° here</string>
+    <string name="geomag_compass_over_five">Storm adds over 5° here</string>
+    <string name="geomag_compass_caption">Your compass\'s own error is larger than this.</string>
+    <string name="geomag_compass_caption_g5">NOAA advises the magnetic model should not be used during a G5 event.</string>
+
+    <!-- GPS row: directional only, never a figure in metres. -->
+    <string name="geomag_gnss_nominal">Nominal</string>
+    <string name="geomag_gnss_may_degrade">May degrade — trust the barometer for altitude</string>
+    <string name="geomag_gnss_degraded">Degraded — trust the barometer, and carry a map</string>
+
+    <!-- Aurora row. -->
+    <string name="geomag_aurora_unavailable">Unavailable — data file missing</string>
+    <!-- %1$s is Geomagnetic.requiredKpLabel, e.g. "about Kp 5+" — the
+         core owns the phrase so a threshold can never render as a
+         decimal on one platform and thirds on the other. -->
+    <string name="geomag_aurora_not_visible">Not visible from here — needs %1$s</string>
+    <string name="geomag_aurora_not_visible_ever">Not visible from here at any Kp</string>
+    <string name="geomag_aurora_needs_kp">Needs %1$s from here</string>
+    <string name="geomag_aurora_any_night">Within the oval\'s reach on any night</string>
+    <string name="geomag_aurora_horizon_north">Possible glow low on the northern horizon</string>
+    <string name="geomag_aurora_horizon_south">Possible glow low on the southern horizon</string>
+    <string name="geomag_aurora_reaches_north">Oval reaches you — look north</string>
+    <string name="geomag_aurora_reaches_south">Oval reaches you — look south</string>
+    <string name="geomag_aurora_overhead">Oval overhead — look up</string>
+    <string name="geomag_aurora_no_darkness">No astronomical darkness here until %1$s</string>
+    <string name="geomag_aurora_window">%1$s–%2$s</string>
+    <string name="geomag_aurora_window_look">%1$s · look %2$s</string>
+    <string name="geomag_aurora_low_suffix">%1$s, low</string>
+    <string name="geomag_aurora_range_north">~%1$d km north of you — needs a clear, open horizon</string>
+    <string name="geomag_aurora_range_south">~%1$d km south of you — needs a clear, open horizon</string>
+
+    <!-- Quadrant bearing to the geomagnetic pole, e.g. "N 15° W". -->
+    <string name="geomag_bearing_ne">N %1$d° E</string>
+    <string name="geomag_bearing_se">S %1$d° E</string>
+    <string name="geomag_bearing_sw">S %1$d° W</string>
+    <string name="geomag_bearing_nw">N %1$d° W</string>
+    <string name="geomag_bearing_north">N</string>
+    <string name="geomag_bearing_south">S</string>
+
+    <!-- Magnetic latitude row. -->
+    <string name="geomag_mlat_north">%1$s° N</string>
+    <string name="geomag_mlat_south">%1$s° S</string>
+
+    <!-- Footer. The source is always named, and always with the payload's
+         own timestamp — never our fetch time dressed up as an observation. -->
+    <string name="geomag_footer_live">NOAA SWPC · %1$s UTC</string>
+    <!-- Cached, but still covering this moment: what it is answering with
+         is NOAA's own forward run, so the line says "forecast" rather than
+         "cached", which reads as a stale observation. Hours up to a day,
+         then days — "57 h ago" is not a quantity anybody reads. -->
+    <string name="geomag_footer_forecast_hours">NOAA SWPC forecast · fetched %1$d h ago</string>
+    <!-- "d", not "days": the same compact unit iOS prints, so the two
+         platforms render one payload identically. -->
+    <string name="geomag_footer_forecast_days">NOAA SWPC forecast · fetched %1$d d ago</string>
+    <string name="geomag_footer_none">No space-weather data — showing what Geo computes on-device</string>
+    <string name="geomag_checking">Checking…</string>
+    <string name="geomag_explain_action">What this means ›</string>
+
+    <!-- Storm badge under the peak-bearing compass hint, G3 and above. -->
+    <string name="geomag_compass_badge">Geomagnetic storm (%1$s) — roughly %2$s extra heading error here.\nYour compass\'s own error is larger.</string>
+    <string name="geomag_band_under_one">under 1°</string>
+    <string name="geomag_band_one_to_two">1–2°</string>
+    <string name="geomag_band_two_to_five">2–5°</string>
+    <string name="geomag_band_over_five">over 5°</string>
+
+    <!-- "What this means" explainer sheet. -->
+    <string name="geomag_explain_title">MAGNETIC CONDITIONS</string>
+    <string name="geomag_explain_intro">Geomagnetic storms are disturbances in Earth\'s magnetic field driven by the solar wind. Geo shows only the three things a storm changes for a navigator.</string>
+    <string name="geomag_explain_compass_heading">COMPASS</string>
+    <string name="geomag_explain_compass_1">Your compass points at magnetic north. The correction to true north — declination — comes from a model of the quiet field, and storms are not in that model. NOAA states its World Magnetic Model \"should not be used during a G5 event\". The figure on the card is a banded estimate of how far a storm can push your heading beyond normal declination error, at your magnetic latitude. It is an estimate, not a measurement, and below G5 it is smaller than the error your phone\'s compass already has.</string>
+    <string name="geomag_explain_compass_2">Kp is quasi-logarithmic. Its linear equivalent, ap, runs from 48 at Kp 5 to 400 at Kp 9.</string>
+    <string name="geomag_explain_compass_3">Local iron routinely causes larger errors than any storm: ore bodies, vehicles, rebar, a pack frame, a phone case magnet. Declination anomalies of 3–4 degrees from local geology are not uncommon and can exceed 10. That is not space weather.</string>
+    <string name="geomag_explain_gps_heading">GPS</string>
+    <string name="geomag_explain_gps">Storms disturb the ionosphere. NOAA: single-frequency GPS errors \"can increase to tens of meters or more\" during a severe storm. Measured dual-frequency errors rose from about 0.16 m in quiet conditions to about 1.05 m in super storms at high latitude, with far more cycle slips; at mid and low latitudes the same measurements stayed under 0.32 m throughout. Vertical error is typically 1.5 to 3 times the horizontal error — so during a storm your barometric altitude is the better number.</string>
+    <string name="geomag_explain_aurora_heading">AURORA</string>
+    <string name="geomag_explain_aurora_1">The auroral oval moves roughly 2 degrees of magnetic latitude equatorward per step of Kp. Geo compares your magnetic latitude against that edge, then checks whether it gets dark enough where you are. A display 1000 km further poleward can still be seen as a glow on the horizon from an open summit — which is why the verdict has two levels.</string>
+    <string name="geomag_explain_aurora_2">The rule ignores magnetic local time, and the real oval dips further equatorward around magnetic midnight. Treat the Kp figure as plus or minus one Kp step, and expect the best displays within an hour or two of midnight. Cloud, light pollution and terrain are not modelled at all.</string>
+    <string name="geomag_explain_limits_heading">WHAT GEO DOES NOT DO</string>
+    <string name="geomag_explain_limits_1">Geo does not use your phone\'s magnetometer to find storms, and no app can. A phone magnetometer\'s noise floor is about 200 nT and does not average down with more samples; a G1 storm is about 100 nT at mid-latitude. A phone cannot tell a solar storm from a parked car. The Kp number here comes from NOAA\'s ground observatory network, not from this device.</string>
+    <string name="geomag_explain_limits_2">Geo makes no health claims. The largest study of the question — 63 million posts across a solar maximum — found no link between geomagnetic activity and headaches.</string>
+    <string name="geomag_explain_data">Data: NOAA Space Weather Prediction Center (public domain). Geo is not affiliated with, or endorsed by, NOAA.</string>
+
+    <!-- Opt-in aurora alerts (Phase 2), appended to the explainer sheet.
+         The note has to state the default and the background fetch in the
+         same breath as the switch, because turning it on is the only thing
+         in Geo that starts network activity you are not watching. -->
+    <string name="geomag_alerts_title">Aurora alerts</string>
+    <string name="geomag_alerts_note">Off by default. When on, Geo checks the forecast a few times a day in the background and notifies you when the aurora could be visible from your location tonight.</string>
 
     <!-- Peak bearing / compass arrow -->
     <string name="field_bearing">Bearing</string>
@@ -157,20 +282,9 @@
     <string name="ar_about_denied">The Nature view shows nearby mountain peaks overlaid on the camera. Camera access is currently turned off for Geo. You can re-enable it in Android Settings and return to this tab.</string>
     <string name="ar_unavailable_title">ARCore Not Available</string>
     <string name="ar_unavailable_detail">This device does not support ARCore.</string>
-    <string name="ar_status_scanning">Scanning</string>
-    <string name="ar_status_skyline">Skyline</string>
-    <string name="ar_status_depth">Depth</string>
-    <string name="ar_distance_source_depth">Depth</string>
-    <string name="ar_distance_source_plane">Plane</string>
-    <string name="ar_distance_source_raycast">Raycast</string>
-    <string name="ar_distance_unknown">--</string>
 
     <!-- Tap-to-identify markers + freeze-frame share -->
     <string name="ar_capture">Capture panorama</string>
-    <string name="ar_history_point">History point</string>
-    <string name="ar_recorded">Recorded</string>
-    <string name="ar_gps_altitude">GPS altitude</string>
-    <string name="ar_bar_altitude">Barometric altitude</string>
     <string name="ar_share_title">Share panorama</string>
     <plurals name="ar_share_markers">
         <item quantity="one">%1$d marker</item>
@@ -193,7 +307,6 @@
     <string name="offline_footer">Caches the area\'s named mountain peaks so the AR Nature view can label them with no signal. The chosen radius sets how wide an area is cached; peaks are shown in the camera out to ~80 km, so a wider pack means more distant summits get named on the horizon. Map tiles aren\'t included (provider licensing).</string>
     <string name="offline_download_region">Download a region</string>
     <string name="offline_download_here">Download here</string>
-    <string name="offline_delete_title">Delete offline area?</string>
     <string name="offline_name_area">Name this area</string>
     <string name="offline_rename_title">Rename area</string>
 

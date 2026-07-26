@@ -54,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
@@ -298,11 +299,35 @@ private fun ArScene(
         } else 0f
     }
     val trueHeading = (((heading + declination) % 360f) + 360f) % 360f
+
+    // Compass health gate. A magnetically-disturbed compass (a MagSafe iPhone
+    // held right next to this phone, a magnetic mount/case) can read a STABLE
+    // ~180° error in the upright AR pose while the flat Info compass still
+    // looks fine — a device-frame bias along the camera axis is world-vertical
+    // (invisible) when flat and capsizes the fused yaw when upright, so N/S
+    // mirror with no other symptom. The heading math downstream is proven
+    // correct (TrueNorthChainTest), so the defence is refusing to latch a
+    // heading the sensor itself flags: while accuracy is LOW/UNRELIABLE — or
+    // before the first sample (NaN) — feed NaN so ArSceneController HOLDS its
+    // current true-north offset instead of converging onto garbage.
+    val headingAccuracy by viewModel.motionManager.headingAccuracy.collectAsState()
+    val compassUsable = !heading.isNaN() &&
+        headingAccuracy > SensorManager.SENSOR_STATUS_ACCURACY_LOW
     // setCompassTrueHeading is a trivial synchronous @Volatile write, so push it
     // via SideEffect (runs after each successful composition) rather than a
     // LaunchedEffect that would cancel + relaunch a coroutine on every ~50 Hz
     // heading change just to assign one field.
-    SideEffect { controller.setCompassTrueHeading(trueHeading) }
+    SideEffect {
+        controller.setCompassTrueHeading(if (compassUsable) trueHeading else Float.NaN)
+    }
+    // When the compass recovers from a bad spell, re-enter fast convergence so
+    // an offset latched during interference re-locks in ~1 s instead of
+    // unwinding a possibly-180° error at the gentle hold lerp.
+    var wasCompassUsable by remember { mutableStateOf(false) }
+    LaunchedEffect(compassUsable) {
+        if (compassUsable && !wasCompassUsable) controller.reconverge()
+        wasCompassUsable = compassUsable
+    }
 
     // Tap-to-identify.
     var selectedMarker by remember { mutableStateOf<ArMarkerSelection?>(null) }
@@ -331,8 +356,8 @@ private fun ArScene(
                     }
                     // Per-frame callback — push ARCore camera matrices into the
                     // controller so the projection stays in lockstep with the feed.
-                    onSessionUpdated = { session, frame ->
-                        controller.update(session, frame, width, height)
+                    onSessionUpdated = { _, frame ->
+                        controller.update(frame, width, height)
                     }
                 }.also { arView = it }
             },
@@ -453,52 +478,81 @@ private fun ArScene(
             Icon(
                 Icons.Default.Explore, null,
                 tint = Color(0xFFFF9800),
-                modifier = Modifier.size(16.dp).rotate(heading)
+                // TRUE heading, not the raw magnetic azimuth — iOS's top bar
+                // reads ARKit's gravityAndHeading frame, which is true-north;
+                // showing magnetic here made the two apps disagree by the
+                // local declination. NaN until the first sensor sample.
+                modifier = Modifier.size(16.dp).rotate(if (trueHeading.isNaN()) 0f else trueHeading)
             )
             Spacer(Modifier.width(4.dp))
             Text(
-                String.format(Locale.US, "%.0f°", heading),
+                if (trueHeading.isNaN()) "--°"
+                else String.format(Locale.US, "%.0f°", trueHeading),
                 color = Color.White,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium
             )
         }
 
-        // Manual compass-alignment chip — visible while an alignment offset
-        // is applied (≥0.5°, i.e. would display as ≥1°). Unobtrusive, matches
-        // the screen's pill styling; tapping it (✕) resets the offset.
-        // Session-only state — deliberately never persisted, compass error
-        // differs every session. Mirrors iOS.
-        if (abs(userAlignmentDeg) >= 0.5f) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 52.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .clickable { controller.setUserAlignment(0f) }
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        // Status pills under the top bar, stacked in a Column so they can
+        // never overlap whatever the user's font scale.
+        Column(
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Manual compass-alignment chip — visible while an alignment offset
+            // is applied (≥0.5°, i.e. would display as ≥1°). Unobtrusive, matches
+            // the screen's pill styling; tapping it (✕) resets the offset.
+            // Session-only state — deliberately never persisted, compass error
+            // differs every session. Mirrors iOS.
+            if (abs(userAlignmentDeg) >= 0.5f) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable { controller.setUserAlignment(0f) }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "⇄",
+                        color = Color(0xFFFF9800),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        String.format(Locale.US, "Alignment %+.0f°", userAlignmentDeg),
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Reset compass alignment",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+
+            // Compass-health hint — the same figure-8 nudge the Info tab shows,
+            // surfaced here because a disturbed magnetometer capsizes the AR
+            // true-north lock (N/S can mirror) with no other visible symptom.
+            // While it shows, the controller is holding its last good offset
+            // rather than latching the flagged readings (see `compassUsable`).
+            if (headingAccuracy <= SensorManager.SENSOR_STATUS_ACCURACY_LOW) {
                 Text(
-                    "⇄",
-                    color = Color(0xFFFF9800),
+                    stringResource(R.string.compass_calibrate),
+                    color = Color(0xFFFFC107),
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.width(5.dp))
-                Text(
-                    String.format(Locale.US, "Alignment %+.0f°", userAlignmentDeg),
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(Modifier.width(5.dp))
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "Reset compass alignment",
-                    tint = Color.White.copy(alpha = 0.7f),
-                    modifier = Modifier.size(14.dp)
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 )
             }
         }
@@ -704,6 +758,12 @@ private const val PEAK_BANNER_TILT_DEG = -75f
  * a thin leader rising from it, and a slightly tilted name/altitude banner at the
  * leader top. The dot marks the exact peak; the banner floats clear so it never
  * hides the summit you're identifying. Mirrors iOS `PeakOverlayView`.
+ *
+ * Dot, leader and banner are ONE composable per peak ([PeakMarker]) — not a
+ * shared Canvas under separate banner layers. Split render paths can update on
+ * different clocks (an in-place rotation relayouts everything at once) and
+ * visibly tear a banner off its leader; a single united figure cannot come
+ * apart, whatever moves it.
  */
 @Composable
 private fun ProjectedOverlay(
@@ -722,7 +782,6 @@ private fun ProjectedOverlay(
     // `PeakOverlayView`'s `_ = sessionManager.frameTick`.
     val frameTick by controller.frameTick.collectAsState()
     val leaderPx = with(LocalDensity.current) { PEAK_LEADER_DP.dp.toPx() }
-    val orange = Color(0xFFFF9800)
 
     // Project every peak once per frame. `summit` is the peak top; `anchor` (the
     // leader top) is the banner's bottom-centre.
@@ -742,69 +801,86 @@ private fun ProjectedOverlay(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Leaders + summit dots — one Canvas for all of them.
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val lineW = 1.5.dp.toPx()
-            val dotR = 2.5.dp.toPx()
-            for (p in projected) {
-                drawLine(
-                    color = orange.copy(alpha = 0.9f * p.opacity),
-                    start = p.summit, end = p.anchor,
-                    strokeWidth = lineW, cap = StrokeCap.Round
-                )
-                drawCircle(orange.copy(alpha = p.opacity), radius = dotR, center = p.summit)
-            }
-        }
-        // Tilted name/altitude banners at the leader tops.
+        // One united marker per peak — leader, dot and banner in one figure.
         for (p in projected) {
             key(p.peak.id) {
-                PeakBanner(peak = p.peak, anchor = p.anchor, tiltDeg = PEAK_BANNER_TILT_DEG,
-                           scale = p.scale, opacity = p.opacity)
+                PeakMarker(peak = p.peak, anchor = p.anchor, leaderPx = leaderPx,
+                           tiltDeg = PEAK_BANNER_TILT_DEG, scale = p.scale, opacity = p.opacity)
             }
         }
     }
 }
 
 /**
- * A peak's floating name/altitude banner. Single-line so it reads cleanly as one
- * strip when stood up near-vertical. Measures itself and pins its bottom-LEADING
- * corner to [anchor] (the leader top) via a `graphicsLayer`, rotating and scaling
- * about that corner so the banner rises from the leader tip like a signpost
- * regardless of tilt or distance scaling. Parked invisible until measured.
- * Mirrors iOS `PeakSummitBanner`.
+ * A peak's complete marker — summit dot, leader and floating name/altitude
+ * banner — rendered as ONE composable, the single united figure. An outer
+ * `graphicsLayer` carries the only screen placement (local origin = [anchor],
+ * the leader top); the leader + dot are drawn in that same layer via
+ * `drawBehind`, hanging from the anchor down to the summit; and only the pill
+ * rotates/scales, about its bottom-leading corner — the anchor — so tilt and
+ * distance scaling never move the leader. No relayout or animation can
+ * separate line, dot and banner. Parked invisible until the pill is measured.
+ * Mirrors iOS `PeakMarkerView`.
  */
 @Composable
-private fun PeakBanner(peak: NearbyPeak, anchor: Offset, tiltDeg: Float, scale: Float, opacity: Float) {
+private fun PeakMarker(
+    peak: NearbyPeak,
+    /** Banner anchor = leader top; the summit dot sits [leaderPx] below it. */
+    anchor: Offset,
+    leaderPx: Float,
+    tiltDeg: Float,
+    scale: Float,
+    opacity: Float
+) {
     var size by remember { mutableStateOf(IntSize.Zero) }
     val orange = Color(0xFFFF9800)
     Box(
         modifier = Modifier
+            // ONE translation for the whole figure: local (0,0) = anchor.
             .graphicsLayer {
-                transformOrigin = TransformOrigin(0f, 1f)   // bottom-leading corner
-                rotationZ = tiltDeg
-                scaleX = scale
-                scaleY = scale
                 translationX = anchor.x
-                translationY = anchor.y - size.height
-                alpha = if (size == IntSize.Zero) 0f else opacity
+                translationY = anchor.y
             }
-            .onSizeChanged { size = it }
+            .drawBehind {
+                drawLine(
+                    color = orange.copy(alpha = 0.9f * opacity),
+                    start = Offset.Zero, end = Offset(0f, leaderPx),
+                    strokeWidth = 1.5.dp.toPx(), cap = StrokeCap.Round
+                )
+                drawCircle(orange.copy(alpha = opacity), radius = 2.5.dp.toPx(),
+                           center = Offset(0f, leaderPx))
+            }
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(7.dp))
-                .background(Color.Black.copy(alpha = 0.6f))
-                .border(1.dp, orange.copy(alpha = 0.8f), RoundedCornerShape(7.dp))
-                .padding(horizontal = 7.dp, vertical = 3.dp)
+                .graphicsLayer {
+                    transformOrigin = TransformOrigin(0f, 1f)   // bottom-leading corner
+                    rotationZ = tiltDeg
+                    scaleX = scale
+                    scaleY = scale
+                    // Lift the pill so that corner sits on the outer layer's
+                    // origin — i.e. exactly on the anchor.
+                    translationY = -size.height.toFloat()
+                    alpha = if (size == IntSize.Zero) 0f else opacity
+                }
+                .onSizeChanged { size = it }
         ) {
-            Text(peak.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            if (peak.altitude > 0) {
-                Spacer(Modifier.width(5.dp))
-                // Summit altitude in metres — the mountaineering convention
-                // ("Mont Blanc 4808 m"), not kilometres.
-                Text("${peak.altitude.toInt()} m", color = Color.White.copy(alpha = 0.8f),
-                     fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .border(1.dp, orange.copy(alpha = 0.8f), RoundedCornerShape(7.dp))
+                    .padding(horizontal = 7.dp, vertical = 3.dp)
+            ) {
+                Text(peak.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                if (peak.altitude > 0) {
+                    Spacer(Modifier.width(5.dp))
+                    // Summit altitude in metres — the mountaineering convention
+                    // ("Mont Blanc 4808 m"), not kilometres.
+                    Text("${peak.altitude.toInt()} m", color = Color.White.copy(alpha = 0.8f),
+                         fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                }
             }
         }
     }

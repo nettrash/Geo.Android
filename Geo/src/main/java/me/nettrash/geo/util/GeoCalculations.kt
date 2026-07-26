@@ -65,52 +65,6 @@ object GeoCalculations {
         return ENUHorizontal(east * c + north * s, north * c - east * s)
     }
 
-    /** Observer eye height (m) above the DEM ground cell the user is
-     *  standing on ([effectiveObserverAltitude]). */
-    const val OBSERVER_EYE_HEIGHT = 1.7
-
-    /** Sensor-vs-DEM disagreement (metres) beyond which we stop trusting
-     *  the DEM anchor and believe the sensor instead (the user may be on
-     *  a tower, cable car, aircraft, …). */
-    const val OBSERVER_ALTITUDE_TOLERANCE = 10.0
-
-    /**
-     * The observer altitude every AR consumer (skyline picker, horizon
-     * overlay, welded pills, markers, occlusion, tap hit-tests) should
-     * use, reconciling the barometer/GPS sensor value with the DEM cell
-     * the observer is standing on.
-     *
-     * Rationale: the silhouette is drawn FROM the DEM, so when the user
-     * is standing on the terrain being drawn, self-consistency with that
-     * terrain beats absolute sensor accuracy — a 10–30 m GPS/baro error
-     * tilts the whole near silhouette up or down. Decision:
-     *
-     *  - no DEM value → [sensor] unchanged (the baro>0-else-GPS input);
-     *  - sensor within ±[tolerance] of `demGround + eyeHeight` → snap to
-     *    `demGround + eyeHeight` (standing on the modelled terrain);
-     *  - sensor MORE than [tolerance] ABOVE `demGround + eyeHeight` →
-     *    keep [sensor] (genuinely elevated: tower, cable car, aircraft);
-     *  - otherwise (at/below eye level, incl. >[tolerance] below DEM
-     *    ground — underground is impossible, that's sensor drift) → snap
-     *    to `demGround + eyeHeight`.
-     *
-     * Pure and total so it unit-tests deterministically. Mirrors iOS
-     * `Geometry.effectiveObserverAltitude`.
-     */
-    fun effectiveObserverAltitude(
-        sensor: Double,
-        demGround: Double?,
-        eyeHeight: Double = OBSERVER_EYE_HEIGHT,
-        tolerance: Double = OBSERVER_ALTITUDE_TOLERANCE
-    ): Double {
-        if (demGround == null) return sensor
-        val demEye = demGround + eyeHeight
-        // Only a sensor reading well ABOVE the terrain eye line survives;
-        // everything else (within tolerance, below eye level, underground)
-        // snaps to the DEM-consistent eye altitude.
-        return if (sensor > demEye + tolerance) sensor else demEye
-    }
-
     /**
      * Calculate bearing (degrees) from one coordinate to another
      */
