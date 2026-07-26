@@ -2,7 +2,6 @@ Version 1.2
 
 • Nature view rebuilt to name the peaks you see: a clean horizon with N/E/S/W markers and a label on each visible summit.
 • A min-altitude slider hides small hills; peaks below the horizon aren't shown.
-• New shutter captures the view with the peak labels to share or save.
-• Offline areas are now peaks-only: smaller, quicker, and updatable.
-• Drag sideways to align the overlay with the real mountains.
+• Offline areas are now peaks-only: smaller and quicker.
+• New Magnetic Conditions card: what a geomagnetic storm is doing to your compass, your GPS and your chances of seeing the aurora. Alerts off by default.
 • Fixed: the altitude graph keeps tracking when GPS drops.

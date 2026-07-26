@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** 25 July 2026
+**Effective date:** 26 July 2026
 **Applies to:** Geo — the Android app published by nettrash on Google Play (`me.nettrash.geo`). This policy is versioned alongside the app's source code; the most recent commit on `main` is authoritative.
 
 ## TL;DR
