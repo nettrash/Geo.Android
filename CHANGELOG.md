@@ -68,6 +68,27 @@ exactly where you're standing, plus a Stats-tab tracking fix.
   real mountains — everything moves together. A small chip shows the current
   adjustment ("Alignment +4°"); tap it to reset. Lasts for the session.
 
+### Changed
+- **The Nature (AR) view is now built around identifying the peaks you can
+  see, and nothing else.** The modelled terrain "skyline" silhouette from 1.1
+  was removed: on camera it rarely lined up with the real ridge, which made
+  the view feel unfinished. In its place the camera shows a clean geometric
+  horizon with N / NE / E / SE / S / SW / W / NW compass markers, and every
+  nearby summit gets its own label — clearer, and far more reliable at
+  pointing you at the right mountain. The extra AR machinery that served the
+  skyline (occlusion, scanning, depth) is gone too, which is easier on the
+  battery.
+- **New peak labels.** Each peak is marked by a thin line rising from its
+  exact summit to a small tilted card with the mountain's name and altitude,
+  so the label points at the peak without covering it.
+- **The peak-bearing arrow now says when a storm is working against it.** At
+  G3 and above, the closest- and highest-mountain cards add a line under the
+  existing calibrate-compass hint with roughly how much extra heading error
+  the storm is worth at your magnetic latitude — and the reminder that your
+  compass's own error is larger than that.
+- **Data sources credit** now names NOAA SWPC (public domain) and the IGRF-14
+  and AACGM-v2 magnetic coordinate models.
+
 ### Fixed
 - **A peak's name card can no longer detach from its line.** Each marker —
   summit dot, line and tilted name card — is now drawn as a single figure, so
