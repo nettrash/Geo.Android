@@ -353,7 +353,18 @@ private fun ArScene(
                     // camera pose to project peaks and the horizon through.
                     sessionConfiguration = { _, config ->
                         config.planeFindingMode = Config.PlaneFindingMode.DISABLED
+                        // Light estimation feeds Filament's indirect light so
+                        // virtual geometry matches the room's lighting — but this
+                        // scene renders ZERO 3-D content (peaks and horizon are
+                        // Compose overlays drawn above the camera surface), so
+                        // ARCore was computing an ambient SH probe every frame
+                        // that nothing ever read.
+                        config.lightEstimationMode = Config.LightEstimationMode.DISABLED
                     }
+                    // Plane finding is already DISABLED above, but SceneView's
+                    // PlaneRenderer still runs a centre-screen hitTest ~10x/s
+                    // looking for planes to visualise. Nothing draws them here.
+                    planeRenderer.isEnabled = false
                     // Per-frame callback — push ARCore camera matrices into the
                     // controller so the projection stays in lockstep with the feed.
                     onSessionUpdated = { _, frame ->

@@ -109,6 +109,10 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 Lifecycle.Event.ON_RESUME -> {
                     viewModel.motionManager.start()
                     viewModel.refreshSpaceWeather()
+                    // This tab is the app's only live coordinate/velocity
+                    // readout, so it is the only one that needs the 5 s GPS
+                    // cadence. Everything else runs off the 15 s baseline.
+                    viewModel.locationManager.setLiveCadence(true)
                 }
                 Lifecycle.Event.ON_PAUSE -> viewModel.motionManager.stop()
                 else -> Unit
@@ -118,6 +122,7 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             viewModel.motionManager.stop()
+            viewModel.locationManager.setLiveCadence(false)
         }
     }
     val location by viewModel.locationManager.location.collectAsState()
