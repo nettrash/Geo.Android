@@ -61,6 +61,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import me.nettrash.geo.sensor.DeviceMotionManager
 import me.nettrash.geo.sensor.PressureTrendClass
 import me.nettrash.geo.ui.GeoViewModel
+import me.nettrash.geo.util.CompassBand
+import me.nettrash.geo.util.GScale
 import me.nettrash.geo.util.GeoCalculations
 import me.nettrash.geo.util.Solar
 import kotlinx.coroutines.delay
@@ -95,11 +97,23 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     // Gate on the lifecycle instead: start on ON_RESUME, stop on ON_PAUSE,
     // and stop again on dispose (tab switch). Mirrors NatureScreen's gating
     // and iOS's `scenePhase == .active` check. start()/stop() are idempotent.
+    //
+    // The magnetic card's fetch rides the SAME observer for the same
+    // reason: a bare LaunchedEffect fires while the tab merely stays
+    // composed in the background. It is throttled to one call per 3-hour
+    // Kp bin, so resuming repeatedly costs nothing.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> viewModel.motionManager.start()
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.motionManager.start()
+                    viewModel.refreshSpaceWeather()
+                    // This tab is the app's only live coordinate/velocity
+                    // readout, so it is the only one that needs the 5 s GPS
+                    // cadence. Everything else runs off the 15 s baseline.
+                    viewModel.locationManager.setLiveCadence(true)
+                }
                 Lifecycle.Event.ON_PAUSE -> viewModel.motionManager.stop()
                 else -> Unit
             }
@@ -108,9 +122,13 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             viewModel.motionManager.stop()
+            viewModel.locationManager.setLiveCadence(false)
         }
     }
     val location by viewModel.locationManager.location.collectAsState()
+    // Drives the storm heading caption on the two peak-bearing rows below,
+    // as well as the magnetic card itself.
+    val magnetic by viewModel.magneticConditions.collectAsState()
     val closestMountain by viewModel.locationManager.closestMountain.collectAsState()
     val closestDistance by viewModel.locationManager.closestMountainDistance.collectAsState()
     val highestMountain by viewModel.locationManager.highestMountain.collectAsState()
@@ -226,6 +244,11 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         // SUN section — today's solar windows + live countdown.
         SolarInfoCard(location)
 
+        // MAGNETIC section — sibling of the Sun card ("what the sky is
+        // doing here"), and above the mountain cards where the storm
+        // heading caption appears.
+        MagneticInfoCard(viewModel)
+
         // CLOSEST MOUNTAIN section
         val unknown = stringResource(R.string.fallback_unknown)
         InfoCard(watermark = stringResource(R.string.section_closest_mountain)) {
@@ -243,7 +266,9 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 userAlt = location?.altitude ?: 0.0,
                 peakLat = closestMountain?.coordinates?.latitude,
                 peakLon = closestMountain?.coordinates?.longitude,
-                motionManager = viewModel.motionManager
+                motionManager = viewModel.motionManager,
+                gScale = magnetic.gScale,
+                compass = magnetic.compass
             )
             InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
@@ -299,7 +324,9 @@ fun InfoScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 userAlt = location?.altitude ?: 0.0,
                 peakLat = highestMountain?.coordinates?.latitude,
                 peakLon = highestMountain?.coordinates?.longitude,
-                motionManager = viewModel.motionManager
+                motionManager = viewModel.motionManager,
+                gScale = magnetic.gScale,
+                compass = magnetic.compass
             )
             InfoRow(stringResource(R.string.field_coordinates)) {
                 Column(horizontalAlignment = Alignment.End) {
@@ -464,8 +491,11 @@ fun InfoCard(watermark: String, content: @Composable () -> Unit) {
 }
 
 /** Data-source attribution footer for the Info tab. Credits the public data
- *  providers the app depends on (fair-use / attribution courtesy for Open-Meteo
- *  and OpenStreetMap, plus Google's frameworks). */
+ *  providers the app depends on. OpenStreetMap is the one that isn't a
+ *  courtesy: its data is licensed under the ODbL, which requires both the
+ *  contributor credit and the licence to be named wherever the data is shown —
+ *  so the peaks line carries both. Open-Meteo, NOAA SWPC and Google's
+ *  frameworks are credited as good manners. */
 @Composable
 private fun DataSourcesCredit() {
     Column(
@@ -475,8 +505,10 @@ private fun DataSourcesCredit() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Data sources", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Text("Peaks © OpenStreetMap contributors (Overpass)", color = Color.Gray, fontSize = 11.sp)
+        Text("Peaks © OpenStreetMap contributors, ODbL (Overpass)", color = Color.Gray, fontSize = 11.sp)
         Text("Elevation & weather by Open-Meteo", color = Color.Gray, fontSize = 11.sp)
+        Text("Space weather by NOAA SWPC (public domain)", color = Color.Gray, fontSize = 11.sp)
+        Text("Magnetic coordinates from IGRF-14 and AACGM-v2", color = Color.Gray, fontSize = 11.sp)
         Text("Maps by Google · AR by ARCore", color = Color.Gray, fontSize = 11.sp)
     }
 }
@@ -489,13 +521,26 @@ fun InfoRow(label: String, content: @Composable () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.Top
     ) {
+        // The LABEL sizes to its own text and the VALUE takes what is left —
+        // not the other way round. With the weight on the label, Compose
+        // measures the unconstrained value first at the full row width, so a
+        // long value ("Possible glow low on the northern horizon") starves the
+        // label down to a single character per line. Short values are laid out
+        // identically either way, which is why only the Magnetic Conditions
+        // card ever exposed this.
         Text(
             text = label,
             color = Color.White,
             fontSize = 14.sp,
-            modifier = Modifier.weight(1f)
+            maxLines = 1,
+            modifier = Modifier.padding(end = 12.dp)
         )
-        content()
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            content()
+        }
     }
 }
 
@@ -648,7 +693,9 @@ private fun durationOrDash(ms: Long?): String {
 private fun PeakBearingRow(
     userLat: Double?, userLon: Double?, userAlt: Double,
     peakLat: Double?, peakLon: Double?,
-    motionManager: DeviceMotionManager
+    motionManager: DeviceMotionManager,
+    gScale: GScale,
+    compass: CompassBand
 ) {
     val valid = userLat != null && userLon != null && peakLat != null && peakLon != null &&
         !(userLat == 0.0 && userLon == 0.0) && !(peakLat == 0.0 && peakLon == 0.0)
@@ -696,4 +743,36 @@ private fun PeakBearingRow(
             )
         }
     }
+    // A storm-time heading caption, shown from G3 up. It can appear
+    // alongside the calibrate hint above — they are different problems,
+    // and this one says so: the phone's own compass error is the larger of
+    // the two. The figure is banded, never a decimal, and is an estimate
+    // rather than a correction to dial in.
+    if (gScale >= GScale.G3) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Text(
+                text = stringResource(
+                    R.string.geomag_compass_badge,
+                    "G${gScale.rawValue}",
+                    stringResource(stormBandLabel(compass))
+                ),
+                color = Color(0xFFFF9800),
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.End
+            )
+        }
+    }
+}
+
+/** Band phrase for the storm heading caption — the same four bands the
+ *  magnetic card shows, phrased to slot into one sentence. */
+private fun stormBandLabel(band: CompassBand): Int = when (band) {
+    CompassBand.NORMAL, CompassBand.UNDER_ONE -> R.string.geomag_band_under_one
+    CompassBand.ONE_TO_TWO -> R.string.geomag_band_one_to_two
+    CompassBand.TWO_TO_FIVE -> R.string.geomag_band_two_to_five
+    CompassBand.OVER_FIVE -> R.string.geomag_band_over_five
 }

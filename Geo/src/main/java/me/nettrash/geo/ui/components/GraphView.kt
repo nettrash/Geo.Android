@@ -29,6 +29,17 @@ import me.nettrash.geo.data.model.DataItem
 import me.nettrash.geo.data.model.DataPoint
 import me.nettrash.geo.data.model.GraphLine
 
+/**
+ * Data-line weight, in dp. Matches iOS `DataSetShape`'s `lineWidth: 1` — and
+ * 1 dp is the same physical size as 1 iOS point, so the two platforms draw the
+ * same graph. Keep every stroke in this file in dp for that reason; raw pixel
+ * widths look different on every screen density.
+ */
+private const val GRAPH_LINE_DP = 1f
+
+/** Vertex-dot radius, in dp. Matches iOS's `vertexRadius: 1.5`. */
+private const val GRAPH_VERTEX_RADIUS_DP = 1.5f
+
 @Composable
 fun GeoGraphView(
     caption: String,
@@ -74,21 +85,24 @@ fun GeoGraphView(
                 val graphWidth = size.width
                 val graphHeight = size.height
 
-                // Draw axes
-                drawLine(Color.White, Offset(0f, 0f), Offset(0f, graphHeight), strokeWidth = 0.5f)
-                drawLine(Color.White, Offset(0f, graphHeight), Offset(graphWidth, graphHeight), strokeWidth = 0.5f)
+                // Axes. All widths below are dp-converted, NOT raw pixels: iOS
+                // strokes these in points, and 1 dp is the same physical size as
+                // 1 point, so dp is what makes the two platforms look identical.
+                // (As raw px, `0.5f` was a sub-pixel hairline on a 3x screen.)
+                drawLine(Color.White, Offset(0f, 0f), Offset(0f, graphHeight), strokeWidth = 0.5.dp.toPx())
+                drawLine(Color.White, Offset(0f, graphHeight), Offset(graphWidth, graphHeight), strokeWidth = 0.5.dp.toPx())
 
                 // Draw grid lines (25%, 50%, 75%)
                 for (frac in listOf(0.25f, 0.5f, 0.75f)) {
                     val y = graphHeight * (1f - frac)
-                    drawLine(Color.White.copy(alpha = 0.3f), Offset(0f, y), Offset(graphWidth, y), strokeWidth = 0.25f)
+                    drawLine(Color.White.copy(alpha = 0.3f), Offset(0f, y), Offset(graphWidth, y), strokeWidth = 0.25.dp.toPx())
                 }
 
                 // Draw reference lines
                 for (line in lines) {
                     if (line.value > min && line.value < max && lineRange > 0) {
                         val y = graphHeight * (1f - (line.value - min) / lineRange)
-                        drawLine(Color(line.color), Offset(0f, y), Offset(graphWidth, y), strokeWidth = 1f)
+                        drawLine(Color(line.color), Offset(0f, y), Offset(graphWidth, y), strokeWidth = 1.dp.toPx())
                     }
                 }
 
@@ -96,19 +110,34 @@ fun GeoGraphView(
                 if (data.size >= 2 && lineRange > 0) {
                     val path = Path()
                     val step = graphWidth / (data.size - 1).coerceAtLeast(1)
+                    // NaN = "no sample here": skip it and break the line, same
+                    // as the paired chart above.
+                    var needMove = true
                     data.forEachIndexed { idx, item ->
+                        if (!item.value.isFinite()) {
+                            needMove = true
+                            return@forEachIndexed
+                        }
                         val x = idx * step
                         val y = graphHeight * (1f - (item.value - min) / lineRange)
-                        if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        if (needMove) {
+                            path.moveTo(x, y)
+                            needMove = false
+                        } else {
+                            path.lineTo(x, y)
+                        }
                     }
-                    drawPath(path, Color.White, style = Stroke(width = 2.dp.toPx()))
+                    // 1 dp = iOS's `lineWidth: 1` point. This was 2.dp, i.e. twice
+                    // as bold as iOS.
+                    drawPath(path, Color.White, style = Stroke(width = GRAPH_LINE_DP.dp.toPx()))
 
-                    // Vertices. Use dp-converted-to-px so high-DPI
-                    // screens (Pixel 8 Pro is ~480ppi, density ~3.0)
-                    // render visible dots — `radius = 2f` was 2
-                    // pixels = ⅔ dp, basically invisible.
-                    val vertexRadius = 3.dp.toPx()
+                    // Vertices. dp-converted so high-DPI screens render visible
+                    // dots (a raw `radius = 2f` was 2 px ≈ ⅔ dp, invisible) — but
+                    // at iOS's 1.5-point radius, not the 3.dp that made them twice
+                    // the size of their iOS counterparts.
+                    val vertexRadius = GRAPH_VERTEX_RADIUS_DP.dp.toPx()
                     data.forEachIndexed { idx, item ->
+                        if (!item.value.isFinite()) return@forEachIndexed
                         val x = idx * step
                         val y = graphHeight * (1f - (item.value - min) / lineRange)
                         drawCircle(Color.White, radius = vertexRadius, center = Offset(x, y))
@@ -224,24 +253,43 @@ fun GeoGraphPointsView(
                 if (data.size >= 2 && lineRange > 0) {
                     val numSeries = data.first().values.size
                     val step = graphWidth / (data.size - 1).coerceAtLeast(1)
-                    val strokeWidth = 2.dp.toPx()
-                    val vertexRadius = 3.dp.toPx()
+                    val strokeWidth = GRAPH_LINE_DP.dp.toPx()
+                    val vertexRadius = GRAPH_VERTEX_RADIUS_DP.dp.toPx()
 
                     for (seriesIdx in 0 until numSeries) {
                         val color = if (seriesIdx < colors.size) colors[seriesIdx] else Color.White
+
+                        // Skip missing samples (NaN): leave a gap and start a
+                        // fresh subpath at the next finite sample, rather than
+                        // drawing a line straight across the hole. This lets a
+                        // series with no data (e.g. GPS altitude with no fix)
+                        // break cleanly while the other series keeps its line.
+                        // The x position is keyed off the slot index, so both
+                        // series stay column-aligned across gaps.
                         val path = Path()
+                        var needMove = true
                         data.forEachIndexed { idx, point ->
-                            val value = if (seriesIdx < point.values.size) point.values[seriesIdx] else 0f
+                            val value = point.values.getOrNull(seriesIdx) ?: Float.NaN
+                            if (!value.isFinite()) {
+                                needMove = true
+                                return@forEachIndexed
+                            }
                             val x = idx * step
                             val y = graphHeight * (1f - (value - min) / lineRange)
-                            if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                            if (needMove) {
+                                path.moveTo(x, y)
+                                needMove = false
+                            } else {
+                                path.lineTo(x, y)
+                            }
                         }
                         drawPath(path, color, style = Stroke(width = strokeWidth))
 
-                        // Vertices for this series — filled circles
-                        // in the same colour as the line.
+                        // Vertices for this series — filled circles in the same
+                        // colour as the line. Gaps get no dot.
                         data.forEachIndexed { idx, point ->
-                            val value = if (seriesIdx < point.values.size) point.values[seriesIdx] else 0f
+                            val value = point.values.getOrNull(seriesIdx) ?: Float.NaN
+                            if (!value.isFinite()) return@forEachIndexed
                             val x = idx * step
                             val y = graphHeight * (1f - (value - min) / lineRange)
                             drawCircle(color, radius = vertexRadius, center = Offset(x, y))

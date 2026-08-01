@@ -46,5 +46,6 @@ abstract class AppLog(category: String) {
         val ar           = object : AppLog("ar") {}
         val history      = object : AppLog("history") {}
         val background   = object : AppLog("background") {}
+        val spaceWeather = object : AppLog("space-weather") {}
     }
 }

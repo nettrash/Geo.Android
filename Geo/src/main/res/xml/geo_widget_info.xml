@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    updatePeriodMillis="0" = no framework update alarm. The previous 120000
+    could never be honoured anyway (AppWidgetManager clamps updatePeriodMillis
+    to a 30-minute floor), so all it bought was an ELAPSED_REALTIME_WAKEUP
+    every 30 min, 24/7, each one cold-starting the process for every user who
+    has the widget pinned.
+
+    Content freshness is unaffected: BarometerRefreshWorker already runs every
+    15 min (twice as often as the clamped alarm), writes through
+    SharedSnapshotStore and calls GeoWidget().updateAll() itself, and
+    WidgetUpdater.pushImmediate() fires on the process ON_STOP hook the moment
+    the user leaves the app.
+-->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="110dp"
     android:minHeight="110dp"
@@ -7,7 +20,7 @@
     android:maxResizeWidth="250dp"
     android:maxResizeHeight="250dp"
     android:resizeMode="horizontal|vertical"
-    android:updatePeriodMillis="120000"
+    android:updatePeriodMillis="0"
     android:widgetCategory="home_screen"
     android:description="@string/widget_description"
     android:previewImage="@mipmap/ic_launcher"

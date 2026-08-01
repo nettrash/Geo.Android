@@ -44,7 +44,7 @@ val storedVersionCode: Int = run {
 }
 
 val resolvedVersionName: String =
-    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.1"
+    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.2"
 
 // Allow opting out of the bump for one build (useful for CI which doesn't
 // want to mutate the tracked file on the runner): `-PnoBump`.
@@ -227,6 +227,71 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.truth)
+}
+
+// ---- mlat_delta_2026.bin integrity gate ----------------------------------
+//
+// The AACGM-v2 correction grid is the highest-risk asset in the magnetic
+// conditions feature: without it the raw centred dipole is 3-6 degrees too
+// far poleward across the British Isles, western Europe, Iceland, the Urals
+// and Australia — always in the over-promising direction — and Geo would
+// tell a hiker in Britain "aurora tonight" at roughly Kp 2.5 when the truth
+// is Kp 5+. `MLatDeltaGrid.decode` refuses anything that isn't exactly
+// MLAT_GRID_BYTE_COUNT bytes, so a bad asset degrades safely at runtime,
+// but it must never get as far as a build.
+//
+// There is no header in the file — the byte count IS the integrity check —
+// so this gate checks exactly what the runtime does, plus an all-zero check
+// that catches a truncate-to-zero or a git-lfs pointer that never resolved.
+// The unit test pins the SHA-256; this task is the cheap version that runs
+// on every build.
+//
+// Deliberately NOT declared as a task input: `inputs.file` on a missing
+// file fails during snapshotting with a generic message, and the whole
+// point here is the specific one. The check reads 4680 bytes, so running
+// it every time costs nothing.
+val mlatGridFile = layout.projectDirectory
+    .file("src/main/assets/spaceweather/mlat_delta_2026.bin").asFile
+val mlatGridByteCount = 4680L
+
+val verifyMlatGrid = tasks.register("verifyMlatGrid") {
+    group = "verification"
+    description = "Fails the build if the AACGM correction grid is missing, the wrong size, or all-zero."
+    outputs.upToDateWhen { false }
+    doLast {
+        if (!mlatGridFile.isFile) {
+            throw GradleException(
+                "Missing ${mlatGridFile.name}. The AACGM-v2 correction grid is required: " +
+                    "without it the aurora verdict falls back to the raw dipole, which is " +
+                    "5.63 degrees too far poleward at London. Regenerate it with " +
+                    "Geo/tools/gen_mlat_delta.py in the iOS repo and copy it byte-identically " +
+                    "to src/main/assets/spaceweather/."
+            )
+        }
+        val actual = mlatGridFile.length()
+        if (actual != mlatGridByteCount) {
+            throw GradleException(
+                "${mlatGridFile.name} is $actual bytes, expected exactly $mlatGridByteCount " +
+                    "(65 latitude rows x 72 longitude columns, one signed byte per node). " +
+                    "The byte count is the file's only integrity check — a wrong size means " +
+                    "the wrong grid, not a recoverable one."
+            )
+        }
+        if (mlatGridFile.readBytes().all { it == 0.toByte() }) {
+            throw GradleException(
+                "${mlatGridFile.name} is all zeroes, which silently reduces every corrected " +
+                    "magnetic latitude to the raw dipole. That is the exact failure the file " +
+                    "exists to prevent."
+            )
+        }
+    }
+}
+
+// `preBuild` is the module-level anchor every variant's build hangs off.
+// Matched by name rather than looked up eagerly so this survives however
+// AGP orders its own registration.
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(verifyMlatGrid)
 }
 
 // ---- IDE compatibility: `unitTestClasses` / `androidTestClasses` aliases ----

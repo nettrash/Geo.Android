@@ -2,8 +2,6 @@ package me.nettrash.geo.ar
 
 import androidx.compose.ui.geometry.Offset
 import com.google.ar.core.Frame
-import com.google.ar.core.Plane
-import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -91,132 +89,136 @@ class ArSceneController {
     private val yawHoldDeadbandDeg = 6f
 
     /** Push the device's true (declination-corrected) compass heading so the
-     *  per-frame [update] can derive the ARCore-frame → true-north offset. */
+     *  per-frame [update] can derive the ARCore-frame → true-north offset.
+     *  Pass NaN while the compass is unusable (no sample yet, or accuracy
+     *  LOW/UNRELIABLE under magnetic interference) — [update] then HOLDS the
+     *  current offset instead of latching a corrupted one. */
     fun setCompassTrueHeading(deg: Float) { compassTrueHeadingDeg = deg }
+
+    /** Set when compass accuracy recovers after a spell of magnetic
+     *  interference; consumed by [update] on the next tracked frame with a
+     *  valid compass. `@Volatile`: written on the UI thread, read on the AR
+     *  frame thread. */
+    @Volatile
+    private var reconvergeRequested = false
+
+    /** Request fast re-convergence (keeping the current offset as the starting
+     *  point) because the compass just recovered from a bad spell. [update]
+     *  honours it ONLY if the recovered compass actually disagrees with the
+     *  held offset by more than the hold deadband — so a session that latched
+     *  garbage during interference re-locks within ~1 s, while a session whose
+     *  held offset was fine keeps its converged hold (and the pan stability
+     *  the deadband exists for) even if accuracy flaps at the gate boundary. */
+    fun reconverge() { reconvergeRequested = true }
+
+    // ---- Manual compass alignment (user knob) --------------------------------
+
+    /** Manual compass-alignment offset (deg), set by the user's horizontal pan
+     *  in NatureScreen when the automatic compass heading is visibly off (a
+     *  typical magnetometer error is 5–15°) and the drawn panorama doesn't line
+     *  up with the real one. Applied inside the projection choke point (see
+     *  [appliedYawOffsetDeg]) so everything — skyline, cardinal labels, welded
+     *  pills, AR markers, occlusion targets, tap hit-tests, share render —
+     *  shifts coherently with one value.
+     *
+     *  SIGN CONVENTION (mirrors iOS `ARSessionManager.headingAlignmentDeg`):
+     *  positive rotates all drawn content CLOCKWISE in compass bearing (a
+     *  point drawn at bearing θ renders where θ + offset would) — because
+     *  screen-right corresponds to increasing azimuth relative to the camera,
+     *  a POSITIVE offset moves the overlay RIGHT on screen, matching a
+     *  rightward drag. Consumers that window content by camera heading must
+     *  compensate: the true bearing at the screen centre is
+     *  (cameraHeading − offset) — which is exactly what
+     *  `cameraHeadingDeg(view) + appliedYawOffsetDeg` yields.
+     *
+     *  Session-only by design (the controller is remembered per AR
+     *  composition, never persisted): compass error is different every
+     *  session. */
+    private val _userAlignmentDeg = MutableStateFlow(0f)
+    val userAlignmentDeg: StateFlow<Float> = _userAlignmentDeg.asStateFlow()
+
+    fun setUserAlignment(deg: Float) { _userAlignmentDeg.value = deg }
+
+    /** The total yaw rotation the projection choke point applies:
+     *  the automatic true-north correction MINUS the manual alignment.
+     *
+     *  Derivation of the minus (this composes with the historic true-north
+     *  fix — do not flip it casually): [trueNorthAdjusted]'s rotation maps a
+     *  point built at compass bearing β to bearing (β − yaw) in the ARCore
+     *  frame; with yaw = [frameYawOffsetDeg] (= true − arcore) that lands
+     *  true-bearing content at its correct ARCore direction. The manual knob
+     *  wants content at β to render where (β + offset) would — iOS's
+     *  `Geometry.rotateENU(clockwiseDegrees: offset)` — so the target ARCore
+     *  bearing becomes (β + offset − frameYaw) = β − (frameYaw − offset),
+     *  i.e. the SAME rotation with yaw = frameYawOffsetDeg − userAlignmentDeg.
+     *  Check: positive offset ⇒ content at larger bearings ⇒ overlay moves
+     *  RIGHT on screen, following a rightward drag. */
+    val appliedYawOffsetDeg: Float
+        get() = frameYawOffsetDeg - _userAlignmentDeg.value
 
     /** True when ARCore reports `TrackingState.TRACKING`. */
     private val _isTracking = MutableStateFlow(false)
     val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
 
     /**
-     * Distance (m) from the camera to whatever the centre of the
-     * viewport is pointing at, derived via an ARCore hit-test on the
-     * latest frame. `null` when no surface was detected.
+     * Bumped once per ARCore frame. Overlays collect this to force a
+     * recomposition every frame, so their projected content tracks the camera.
      *
-     * Mirrors iOS `ARSessionManager.raycastDistance` (kept under a
-     * single name because the ARCore API uses "hit-test" while
-     * iOS calls it "raycast" — the result is the same).
+     * Without it they'd only recompose when some *other* observed state changed:
+     * the camera matrices are read through `.value` (not collected), because
+     * collecting a `FloatArray` StateFlow re-emits on every new array anyway.
+     * The Nature overlays used to get their per-frame refresh by accident, from
+     * the diagnostic flows (wall distance, occluded ids) that ticked constantly;
+     * when those were deleted the markers started updating only at sensor pace,
+     * which read as markers jumping and blinking. This is the explicit version of
+     * that refresh, and mirrors iOS `ARSessionManager.frameTick`.
      */
-    private val _wallDistance = MutableStateFlow<Float?>(null)
-    val wallDistance: StateFlow<Float?> = _wallDistance.asStateFlow()
-
-    /** Label for the current distance source — surfaces in the UI so
-     *  the user knows whether the number is from a plane fit, a
-     *  hit-test, or the ARCore depth API. */
-    enum class DistanceSource { RAYCAST, DEPTH, PLANE }
-
-    private val _distanceSource = MutableStateFlow<DistanceSource?>(null)
-    val distanceSource: StateFlow<DistanceSource?> = _distanceSource.asStateFlow()
+    private val _frameTick = MutableStateFlow(0L)
+    val frameTick: StateFlow<Long> = _frameTick.asStateFlow()
 
     /**
-     * Snapshots of vertical planes detected by ARCore. Used by
-     * [ArOcclusionManager] to hide markers that sit behind detected
-     * walls indoors.
+     * How long `isTracking` stays true after ARCore stops reporting TRACKING.
      *
-     * We snapshot rather than expose the live `Plane` trackables so
-     * the occlusion math can run off the main thread without
-     * touching ARCore's not-thread-safe handles.
+     * ARCore drops to PAUSED whenever it briefly loses visual features — which,
+     * on a tab whose whole job is pointing at distant mountains and open sky, is
+     * common and usually lasts only a few frames. `isTracking` is the single
+     * switch that hides the horizon line, the cardinal markers AND every peak
+     * marker, so reacting to each blip made the entire overlay flicker in and
+     * out. Holding it briefly keeps the overlay drawn at the last good pose (the
+     * matrices are left untouched while untracked) instead of blanking it.
      */
-    private val _verticalPlanes = MutableStateFlow<List<PlaneSnapshot>>(emptyList())
-    val verticalPlanes: StateFlow<List<PlaneSnapshot>> = _verticalPlanes.asStateFlow()
+    private val trackingGraceMs = 800L
+    private var lastTrackedMs = 0L
 
-    /**
-     * Latest per-pixel depth (mm, U16, little-endian native order) plus its
-     * dimensions and display transform. `null` when the depth API isn't
-     * supported on this device or the frame didn't carry one.
-     *
-     * The byte buffer is copied out of the ARCore Image so the
-     * occlusion thread can read it after the frame is released.
-     */
-    private val _depthSnapshot = MutableStateFlow<DepthSnapshot?>(null)
-    val depthSnapshot: StateFlow<DepthSnapshot?> = _depthSnapshot.asStateFlow()
-
-    /**
-     * `true` once we've actually decoded a depth frame from this AR
-     * session. Drives the "Depth" badge in the UI and the depth-
-     * sampling branch of [ArOcclusionManager].
-     *
-     * Why not just `Session.isDepthModeSupported`? Some devices
-     * (Pixel 4a 5G, certain Samsung models) advertise depth support
-     * via that API but ARCore's motion-stereo pipeline fails
-     * internally at frame-acquisition time on their cameras (see
-     * the `spherical_rectifier.cc: kUnrectifiedOriginal` native
-     * error). Reporting depth as "supported" when it's actually
-     * broken misleads the user and the occlusion logic. Flipping
-     * this flag only after a successful decode gives us ground
-     * truth.
-     */
-    private val _isDepthSupported = MutableStateFlow(false)
-    val isDepthSupported: StateFlow<Boolean> = _isDepthSupported.asStateFlow()
-
-    /**
-     * Internal: did we ask ARCore to enable depth mode in the
-     * session config? Only when this is `true` do we attempt to
-     * acquire depth images — saves cycles on devices that don't
-     * report capability at all. Independent of [_isDepthSupported]
-     * because *enabling* the mode and *getting a usable frame*
-     * aren't the same thing on every device.
-     */
-    private var depthConfigEnabled = false
-
-    /** Centre hit-test throttle. ARCore's native `hit_test.cc`
-     *  logs a WARNING any time a hit-test returns no point, so
-     *  calling it every frame floods logcat. 250 ms (≈4 Hz) is
-     *  fast enough for the crosshair distance label to feel live
-     *  and cuts the noise volume roughly 15× at 60 fps. */
-    private var lastHitTestMs = 0L
-    private val hitTestThrottleMs = 250L
-
-    /** Vertical-plane snapshot throttle. Enumerating + copying all plane
-     *  trackables runs on the Choreographer (main) thread; detected planes
-     *  change slowly, so ~2 Hz is plenty and keeps the per-frame main-thread
-     *  cost off the 60 fps hot path (iOS gets these via event-driven delegate
-     *  callbacks instead of polling). */
-    private var lastPlaneSnapshotMs = 0L
-    private val planeSnapshotThrottleMs = 500L
-
-    /**
-     * Called by the AR session configuration callback to record
-     * whether depth mode was enabled in the session config. We try
-     * to acquire depth frames whenever this is true; the public
-     * [isDepthSupported] flag only flips once a frame actually
-     * decodes.
-     */
-    fun setDepthConfigEnabled(enabled: Boolean) {
-        depthConfigEnabled = enabled
-        if (!enabled) {
-            // If a previous session had depth working and the user
-            // turned it off (or we're reconfiguring without it),
-            // reset the public flag too so the badge clears.
-            _isDepthSupported.value = false
-        }
-    }
 
     /**
      * Called by the ARSceneView frame listener every ~16 ms. Cheap
      * — pulls a handful of matrices off ARCore and pushes them into
      * the StateFlows. Skips quietly when the camera isn't tracking
      * (matrices would be garbage anyway).
-     *
-     * [session] is needed to enumerate trackables (vertical planes)
-     * for the occlusion path; pass `null` when only the matrices are
-     * needed.
      */
-    fun update(session: Session?, frame: Frame, viewportWidthPx: Int, viewportHeightPx: Int) {
+    fun update(frame: Frame, viewportWidthPx: Int, viewportHeightPx: Int) {
         val cam = frame.camera
-        _isTracking.value = cam.trackingState == TrackingState.TRACKING
         _viewportSize.value = IntSize(viewportWidthPx, viewportHeightPx)
-        if (!_isTracking.value) return
+
+        val tracking = cam.trackingState == TrackingState.TRACKING
+        val nowMs0 = System.currentTimeMillis()
+        if (tracking) {
+            lastTrackedMs = nowMs0
+            _isTracking.value = true
+        } else {
+            // Hold the last good pose through a brief tracking blip rather than
+            // blanking the whole overlay — see `trackingGraceMs`. The matrices
+            // below are deliberately NOT overwritten while untracked, so the
+            // overlay keeps drawing at the last pose we trusted.
+            if (nowMs0 - lastTrackedMs > trackingGraceMs) _isTracking.value = false
+            // Still tick so overlays re-render (and settle) during the grace.
+            _frameTick.value += 1
+            return
+        }
+
+        // One tick per tracked frame — the overlays' per-frame refresh signal.
+        _frameTick.value += 1
 
         // 4×4 matrices, column-major in OpenGL — but ARCore's
         // getViewMatrix / getProjectionMatrix already returns column
@@ -246,6 +248,17 @@ class ArSceneController {
         if (!compass.isNaN()) {
             val arcoreHeading = cameraHeadingDeg(view).toFloat()
             val target = normalizeDeg(compass - arcoreHeading)
+            // A requested post-recovery re-lock is honoured only when the
+            // fresh target genuinely disagrees with the held offset (see
+            // [reconverge]); consumed here, where a valid target exists.
+            if (reconvergeRequested) {
+                reconvergeRequested = false
+                if (yawOffsetInitialized &&
+                    abs(shortestDeg(target - frameYawOffsetDeg)) > yawHoldDeadbandDeg
+                ) {
+                    yawConvergeFrames = 0
+                }
+            }
             when {
                 !yawOffsetInitialized -> {
                     yawOffsetInitialized = true
@@ -275,122 +288,6 @@ class ArSceneController {
             }
         }
 
-        // Best-effort centre-of-viewport hit-test. ARCore picks the
-        // closest qualifying anchor along the screen-centre ray.
-        // We try a few result types in priority order and pick the
-        // first that fires — mirrors iOS's LiDAR → raycast → plane
-        // ordering.
-        // Centre hit-test — gives us the "wall distance" label in the
-        // crosshair AND fuels the distance-source badge. Throttled to
-        // ~4 Hz (both to cut native ARCore log noise — each call can
-        // trigger a "no point hit" warning — and to lighten per-frame
-        // CPU work). We run it on every tracking frame rather than
-        // gating on a detected plane/depth frame: outdoors (the app's
-        // mountain use case) ARCore detects essentially no vertical
-        // planes and depth is disabled, so a plane/depth gate left the
-        // crosshair distance dead, a parity gap vs iOS which raycasts
-        // every frame. The hit-test itself reports whether it found a
-        // surface; we suppress the label only when it yields nothing.
-        // The label updates fast enough that 4 Hz feels live.
-        val nowMs = System.currentTimeMillis()
-        if (nowMs - lastHitTestMs >= hitTestThrottleMs) {
-            lastHitTestMs = nowMs
-            try {
-                val centreX = viewportWidthPx / 2f
-                val centreY = viewportHeightPx / 2f
-                val hits = frame.hitTest(centreX, centreY)
-                if (hits.isNotEmpty()) {
-                    // Prefer depth-API hits, then estimated-plane, then anything else.
-                    val first = hits.firstOrNull { it.trackable is com.google.ar.core.DepthPoint }
-                        ?: hits.firstOrNull { it.trackable is com.google.ar.core.Plane }
-                        ?: hits.first()
-                    val cameraToHit = floatArrayOf(
-                        first.hitPose.tx() - pos[0],
-                        first.hitPose.ty() - pos[1],
-                        first.hitPose.tz() - pos[2]
-                    )
-                    val dist = kotlin.math.sqrt(
-                        cameraToHit[0] * cameraToHit[0] +
-                            cameraToHit[1] * cameraToHit[1] +
-                            cameraToHit[2] * cameraToHit[2]
-                    )
-                    _wallDistance.value = dist
-                    _distanceSource.value = when (first.trackable) {
-                        is com.google.ar.core.DepthPoint -> DistanceSource.DEPTH
-                        is com.google.ar.core.Plane      -> DistanceSource.PLANE
-                        else                              -> DistanceSource.RAYCAST
-                    }
-                } else {
-                    _wallDistance.value = null
-                    _distanceSource.value = null
-                }
-            } catch (t: Throwable) {
-                // ARCore can throw NotYetAvailableException early on.
-                _wallDistance.value = null
-                _distanceSource.value = null
-            }
-        }
-
-        // Snapshot vertical planes for the occlusion thread (throttled — see
-        // planeSnapshotThrottleMs; this enumerate+copy runs on the main thread).
-        if (session != null && nowMs - lastPlaneSnapshotMs >= planeSnapshotThrottleMs) {
-            lastPlaneSnapshotMs = nowMs
-            try {
-                _verticalPlanes.value = session.getAllTrackables(Plane::class.java)
-                    .asSequence()
-                    .filter { it.trackingState == TrackingState.TRACKING }
-                    .filter { it.type == Plane.Type.VERTICAL }
-                    .map { plane ->
-                        val poseMat = FloatArray(16)
-                        plane.centerPose.toMatrix(poseMat, 0)
-                        PlaneSnapshot(
-                            transform = poseMat,
-                            extentX = plane.extentX,
-                            extentZ = plane.extentZ
-                        )
-                    }
-                    .toList()
-            } catch (t: Throwable) {
-                // Trackable enumeration can fail under heavy GC. Safe
-                // to ignore — last snapshot stays in place.
-            }
-        }
-
-        // Snapshot depth image only if the session was configured
-        // for depth in the first place. Each successful decode flips
-        // `_isDepthSupported` from false → true; we never flip it
-        // back, since a single proven-good frame means the hardware
-        // path works and any subsequent failures are transient.
-        if (depthConfigEnabled) {
-            try {
-                frame.acquireDepthImage16Bits().use { img ->
-                    val plane0 = img.planes[0]
-                    val buffer = plane0.buffer
-                    val bytes = ByteArray(buffer.remaining())
-                    buffer.get(bytes)
-                    _depthSnapshot.value = DepthSnapshot(
-                        widthPx = img.width,
-                        heightPx = img.height,
-                        rowStrideBytes = plane0.rowStride,
-                        pixels = bytes
-                    )
-                    if (!_isDepthSupported.value) {
-                        _isDepthSupported.value = true
-                    }
-                }
-            } catch (t: Throwable) {
-                // NotYetAvailableException is the common case on
-                // early frames before ARCore has produced its first
-                // depth output. On devices where depth is reported
-                // as supported but doesn't actually work (e.g. the
-                // `spherical_rectifier kUnrectifiedOriginal` native
-                // error path), this exception keeps firing for the
-                // whole session and `_isDepthSupported` stays
-                // `false` — which is what we want so the UI and
-                // occlusion logic don't pretend depth is working
-                // when it isn't.
-            }
-        }
     }
 
     /** Mark the session as no longer tracking — call from
@@ -412,7 +309,7 @@ class ArSceneController {
      * known yet.
      */
     fun trueNorthAdjusted(world: FloatArray): FloatArray =
-        trueNorthAdjusted(world, _cameraPosition.value, frameYawOffsetDeg)
+        trueNorthAdjusted(world, _cameraPosition.value, appliedYawOffsetDeg)
 
     /** Pure variant taking an explicit camera position + yaw offset, so an
      *  off-main caller can snapshot ONE consistent frame and pass it in rather
@@ -445,7 +342,11 @@ class ArSceneController {
         val view = _viewMatrix.value ?: return null
         val proj = _projectionMatrix.value ?: return null
         val vp = _viewportSize.value ?: return null
-        return projectToScreen(world, view, proj, vp, _cameraPosition.value, frameYawOffsetDeg)
+        // Composed yaw: automatic true-north correction + the manual
+        // compass-alignment knob (see [appliedYawOffsetDeg] for the sign
+        // derivation) — so every consumer of this choke point shifts
+        // coherently when the user drags the panorama into alignment.
+        return projectToScreen(world, view, proj, vp, _cameraPosition.value, appliedYawOffsetDeg)
     }
 
     /**
@@ -524,43 +425,4 @@ class ArSceneController {
      *  packed-long quirks. */
     data class IntSize(val width: Int, val height: Int)
 
-    /**
-     * Thread-safe snapshot of a detected vertical plane. Stores the
-     * column-major world transform plus extents so the occlusion
-     * thread can intersect rays against it without touching the
-     * non-thread-safe `Plane` trackable.
-     */
-    data class PlaneSnapshot(
-        val transform: FloatArray,
-        val extentX: Float,
-        val extentZ: Float
-    )
-
-    /**
-     * Raw depth image copied out of the ARCore Image so it can be
-     * read after the frame is released. ARCore returns depth in
-     * millimetres as U16 pixels (native little-endian order) in plane 0.
-     */
-    data class DepthSnapshot(
-        val widthPx: Int,
-        val heightPx: Int,
-        val rowStrideBytes: Int,
-        val pixels: ByteArray
-    ) {
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is DepthSnapshot) return false
-            return widthPx == other.widthPx &&
-                heightPx == other.heightPx &&
-                rowStrideBytes == other.rowStrideBytes &&
-                pixels.contentEquals(other.pixels)
-        }
-        override fun hashCode(): Int {
-            var result = widthPx
-            result = 31 * result + heightPx
-            result = 31 * result + rowStrideBytes
-            result = 31 * result + pixels.contentHashCode()
-            return result
-        }
-    }
 }
