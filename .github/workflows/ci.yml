@@ -23,7 +23,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
       # -PnoBump keeps CI from mutating the tracked version.properties on the runner.
       - name: Assemble debug (phone + wear)
         run: ./gradlew :Geo:assembleDebug :wear:assembleDebug --no-daemon -PnoBump
@@ -37,7 +37,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
       - name: Android Lint (phone + wear)
         run: ./gradlew :Geo:lintDebug :wear:lintDebug --no-daemon -PnoBump
       - name: Upload lint reports
@@ -57,7 +57,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests (phone + wear)
         run: ./gradlew :Geo:testDebugUnitTest :wear:testDebugUnitTest --no-daemon -PnoBump
       - name: Upload test reports

@@ -1,8 +1,8 @@
-Version 1.1
+Version 1.2
 
-• Fixes a first-launch issue where location and altitude wouldn't start until you reopened the app.
-• More accurate altitude that now agrees across the phone, widget and watch.
-• AR terrain skyline loads instantly and works offline after a first visit.
-• New: Clear history, plus automatic cleanup of very old data.
-• Fixed a crash when opening Directions without Google Maps.
-• Many reliability and battery improvements.
+• Nature view rebuilt to name the peaks you see: a horizon with N/E/S/W markers and a label on each visible summit.
+• A min-altitude slider hides small hills.
+• Offline areas are peaks-only: smaller, quicker.
+• New: Magnetic Conditions — what a geomagnetic storm does to your compass, GPS and aurora chances. Alerts off by default.
+• Widget and Wear tile wake less often: better battery, still current when you look.
+• Fixed: the altitude graph keeps tracking when GPS drops.

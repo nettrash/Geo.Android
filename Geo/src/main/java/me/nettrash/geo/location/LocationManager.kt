@@ -50,14 +50,64 @@ class LocationManager @Inject constructor(
     val highestMountainDistance: StateFlow<Double?> = _highestMountainDistance.asStateFlow()
 
     var mountainsData: MountainData? = null
+        set(value) {
+            field = value
+            locatedMountains = value?.let { data ->
+                val all = mutableListOf<MountainInfo>()
+                data.highest?.mountains?.let { all.addAll(it) }
+                data.sevenPeaks?.mountains?.let { all.addAll(it) }
+                data.snowLeopardOfRussia?.mountains?.let { all.addAll(it) }
+                // Drop coordinate-less mountains before the nearest-search: a null
+                // latitude/longitude would otherwise fall through to (0,0) and make
+                // the peak a phantom off the coast of Africa.
+                all.mapNotNull { m ->
+                    val lat = m.coordinates?.latitude
+                    val lon = m.coordinates?.longitude
+                    if (lat == null || lon == null) null
+                    else m to Location("").apply { latitude = lat; longitude = lon }
+                }
+            }
+        }
+
+    /**
+     * The flattened, coordinate-filtered peak list with each peak's [Location]
+     * pre-built — derived once when [mountainsData] is assigned rather than
+     * rebuilt on every GPS fix.
+     *
+     * [refreshClosestMountain] runs on every accepted fix (every 2-5 s, all
+     * session, on every tab). It used to re-flatten and re-filter the 136-entry
+     * dataset and allocate a fresh `Location` per peak inside `minByOrNull`'s
+     * selector — ~136 short-lived objects per fix for a dataset that never
+     * changes after load. The distances themselves are still computed per fix
+     * with the same `Location.distanceTo`, so the selected peak and the
+     * displayed distance are bit-identical to before.
+     */
+    private var locatedMountains: List<Pair<MountainInfo, Location>>? = null
     var onLocationUpdated: ((Location) -> Unit)? = null
 
     private var stepLocation: Location? = null
-    private var trackingStepLocation: Location? = null
+
+    /** True once the first real-time tracking sample has been recorded. Lets
+     *  [trackingRefresh] emit the first sample immediately, then throttle the
+     *  rest to [trackingStep]. Replaces the old `trackingStepLocation` seed
+     *  marker, which conflated "not started yet" with "no current GPS fix" and
+     *  so blocked barometer-only tracking when GPS was unavailable. */
+    private var trackingSeeded = false
+
     private val horizontalStep = 1000f // meters
     private val verticalStep = 50f // meters
     private var lastInfoTime = System.currentTimeMillis()
     private val trackingStep = 15_000L // 15 seconds
+
+    /** A GPS fix older than this is treated as "GPS unavailable" for the
+     *  real-time tracking chart: the barometer path fires every [trackingStep],
+     *  and if the last fix hasn't refreshed within this window the GPS series
+     *  records a gap rather than freezing at a stale altitude while the
+     *  barometer keeps moving. Well above the ~1 Hz cadence a live fix
+     *  delivers, so a working GPS is never mistaken for stale.
+     *  Mirrors iOS `Location.trackingGPSStaleness`. */
+    private val trackingGpsStaleness = 60_000L // 60 seconds
+
     var allowTracking = true
 
     // Dedicated calendar-day tracker for the daily-rollover history
@@ -71,11 +121,43 @@ class LocationManager @Inject constructor(
     // called both on init and again after a permission grant (A1).
     private var isSubscribed = false
 
+    /** Interval the current subscription was registered with, so
+     *  [startLocationUpdates] can tell "already subscribed" from
+     *  "subscribed, but at the wrong cadence". */
+    private var currentIntervalMs = 0L
+
+    /** Whether a live-readout consumer (the Info tab) is on screen. */
+    private var wantsLiveCadence = false
+
+    /** Cadence wanted right now. See [setLiveCadence]. */
+    private val wantedIntervalMs: Long
+        get() = if (wantsLiveCadence) LIVE_INTERVAL_MS else DEFAULT_INTERVAL_MS
+
+    /**
+     * Raise/lower the GPS cadence as the Info tab comes and goes.
+     *
+     * Deliberately CANNOT create a subscription: it only re-registers one that
+     * already exists, so it is safe to call from `onDispose` even when the
+     * process-lifecycle observer has already torn GPS down. If nothing is
+     * subscribed the preference is just recorded, and the next
+     * [startLocationUpdates] picks it up. Mirrors iOS `Location.setPrecision`.
+     */
+    fun setLiveCadence(live: Boolean) {
+        if (wantsLiveCadence == live) return
+        wantsLiveCadence = live
+        if (isSubscribed) startLocationUpdates(wantedIntervalMs)
+    }
+
     private var lastRecordedPressure = 0.0
     private val pressureStep = 0.1 // kPa
 
     var onRecordHistory: ((Location) -> Unit)? = null
-    var onTrackingUpdate: ((Location) -> Unit)? = null
+
+    /** Emits one real-time tracking sample. The [Location] is NULLABLE: `null`
+     *  means "GPS is unavailable right now" (no fix / no altitude / stale), and
+     *  the consumer records a gap for the GPS series while still plotting the
+     *  barometer. See [trackingRefresh]. */
+    var onTrackingUpdate: ((Location?) -> Unit)? = null
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -107,7 +189,6 @@ class LocationManager @Inject constructor(
                 qnhRepository.maybeRefresh(loc)
                 onLocationUpdated?.invoke(loc)
 
-                val now = System.currentTimeMillis()
                 val today = currentDayKey()
                 val step = stepLocation
                 if (step != null) {
@@ -131,13 +212,10 @@ class LocationManager @Inject constructor(
                     onRecordHistory?.invoke(loc)
                 }
 
-                if (allowTracking) {
-                    if (trackingStepLocation == null || lastInfoTime + trackingStep <= now) {
-                        trackingStepLocation = Location(loc)
-                        lastInfoTime = now
-                        onTrackingUpdate?.invoke(loc)
-                    }
-                }
+                // `_location.value` is already the fresh fix (set above), so let
+                // the self-throttling recorder read it directly. It emits the
+                // first sample immediately, then honours `trackingStep`.
+                trackingRefresh()
             }
         }
     }
@@ -165,19 +243,34 @@ class LocationManager @Inject constructor(
      * first launch cannot crash or silently register a dead callback.
      */
     @SuppressLint("MissingPermission")
-    fun startLocationUpdates() {
+    fun startLocationUpdates(intervalMs: Long = wantedIntervalMs) {
         if (!hasLocationPermission()) return
-        if (isSubscribed) return
+        // Already subscribed at this exact cadence — nothing to do. A DIFFERENT
+        // cadence falls through and re-registers, the same way
+        // DeviceMotionManager.start() re-registers to change its sensor rate.
+        if (isSubscribed && intervalMs == currentIntervalMs) return
+        if (isSubscribed) fusedLocationClient.removeLocationUpdates(locationCallback)
 
         val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY, 5000L
-        ).setMinUpdateIntervalMillis(2000L).build()
+            // PRIORITY_HIGH_ACCURACY is load-bearing, NOT a tuning knob:
+            // usableGpsFix() rejects any fix without hasAltitude(), and
+            // network/cell fixes carry neither altitude nor speed. Dropping to
+            // BALANCED would permanently gap the Stat tab's GPS-altitude series,
+            // kill the verticalStep history trigger and pin velocity at 0 m/s.
+            // The interval is the safe lever.
+            Priority.PRIORITY_HIGH_ACCURACY, intervalMs
+        )
+            // Keep the 2 s floor: fixes another app has already paid for are
+            // consumed for free rather than discarded.
+            .setMinUpdateIntervalMillis(2000L)
+            .build()
 
         try {
             fusedLocationClient.requestLocationUpdates(
                 request, locationCallback, Looper.getMainLooper()
             )
             isSubscribed = true
+            currentIntervalMs = intervalMs
         } catch (e: SecurityException) {
             // Permission was revoked between the check above and the
             // request, or Play Services rejected it. Leave it unsubscribed
@@ -193,6 +286,7 @@ class LocationManager @Inject constructor(
     fun stopLocationUpdates() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
         isSubscribed = false
+        currentIntervalMs = 0L
     }
 
     private fun currentDayKey(): Int {
@@ -213,16 +307,49 @@ class LocationManager @Inject constructor(
             }
         }
 
-        if (allowTracking) {
-            _location.value?.let { loc ->
-                val now = System.currentTimeMillis()
-                if (lastInfoTime + trackingStep <= now) {
-                    trackingStepLocation = Location(loc)
-                    lastInfoTime = now
-                    onTrackingUpdate?.invoke(loc)
-                }
-            }
-        }
+        // Update tracking on every barometer reading (subject to the throttle),
+        // regardless of pressure step AND regardless of whether a GPS fix
+        // exists. This is what keeps the tracking chart's barometer series live
+        // when GPS is unavailable (indoors / denied / no fix yet) — with no
+        // usable fix the GPS series records a gap and only the barometer line
+        // is drawn. Previously this was inside a `_location.value?.let {}`, so
+        // with no fix the barometer never reached the chart at all.
+        trackingRefresh()
+    }
+
+    /**
+     * Emit one real-time tracking sample, subject to the [trackingStep]
+     * throttle. Driven by BOTH the GPS callback and [onBarometerUpdated], so
+     * the barometer series keeps updating even when GPS is unavailable.
+     *
+     * The GPS fix is passed only when it's currently usable — see [usableGpsFix];
+     * otherwise `null` records a gap so the GPS line breaks instead of freezing
+     * at a stale altitude while the barometer keeps moving.
+     *
+     * The first sample is emitted immediately; later ones honour the throttle.
+     * The shared [lastInfoTime] means the two paths cooperate — whichever fires
+     * in a given window emits one sample that reads both sensors at that
+     * instant. Mirrors iOS `Location.trackingRefresh()`.
+     */
+    private fun trackingRefresh() {
+        if (!allowTracking) return
+        val now = System.currentTimeMillis()
+        if (trackingSeeded && lastInfoTime + trackingStep > now) return
+        trackingSeeded = true
+        lastInfoTime = now
+        onTrackingUpdate?.invoke(usableGpsFix())
+    }
+
+    /**
+     * The current fix, or `null` when GPS is effectively unavailable for the
+     * tracking chart: no fix at all, a fix carrying no altitude, or a fix that
+     * has gone stale (see [trackingGpsStaleness]).
+     */
+    private fun usableGpsFix(): Location? {
+        val loc = _location.value ?: return null
+        if (!loc.hasAltitude()) return null
+        if (System.currentTimeMillis() - loc.time > trackingGpsStaleness) return null
+        return loc
     }
 
     private fun refreshClosestMountain(loc: Location) {
@@ -241,34 +368,21 @@ class LocationManager @Inject constructor(
             _highestMountain.value = data.sevenPeaks?.mountains?.firstOrNull()
         }
 
-        val allMountains = mutableListOf<MountainInfo>()
-        data.highest?.mountains?.let { allMountains.addAll(it) }
-        data.sevenPeaks?.mountains?.let { allMountains.addAll(it) }
-        data.snowLeopardOfRussia?.mountains?.let { allMountains.addAll(it) }
+        // Flattened, coordinate-filtered, with each peak's Location pre-built —
+        // see `locatedMountains`. Same order and same `distanceTo` metric as
+        // before, so `minByOrNull` still resolves ties to the same peak.
+        val candidates = locatedMountains ?: return
 
-        // Drop coordinate-less mountains before the nearest-search: a null
-        // latitude/longitude would otherwise fall through to (0,0) and make
-        // the peak a phantom off the coast of Africa.
-        val locatedMountains = allMountains.filter {
-            it.coordinates?.latitude != null && it.coordinates?.longitude != null
-        }
-
-        val closest = locatedMountains.minByOrNull { m ->
-            val mloc = Location("").apply {
-                latitude = m.coordinates?.latitude ?: 0.0
-                longitude = m.coordinates?.longitude ?: 0.0
-            }
-            loc.distanceTo(mloc).toDouble()
-        }
+        val closest = candidates.minByOrNull { (_, mloc) -> loc.distanceTo(mloc) }
 
         if (closest != null) {
-            _closestMountain.value = closest
-            val cLoc = Location("").apply {
-                latitude = closest.coordinates?.latitude ?: 0.0
-                longitude = closest.coordinates?.longitude ?: 0.0
-            }
-            _closestMountainDistance.value = loc.distanceTo(cLoc).toDouble()
+            val (closestMountain, closestLoc) = closest
+            _closestMountain.value = closestMountain
+            _closestMountainDistance.value = loc.distanceTo(closestLoc).toDouble()
 
+            // Left exactly as it was: one allocation per fix, not 136, and
+            // changing its null-coordinate fallback would be a correctness
+            // change rather than an energy one.
             _highestMountain.value?.let { highest ->
                 val hLoc = Location("").apply {
                     latitude = highest.coordinates?.latitude ?: 0.0
@@ -277,5 +391,23 @@ class LocationManager @Inject constructor(
                 _highestMountainDistance.value = loc.distanceTo(hLoc).toDouble()
             }
         }
+    }
+
+    companion object {
+        /**
+         * Baseline cadence. Matches [trackingStep] — the fastest consumer that
+         * isn't the Info tab's live readout. The history steps trigger on
+         * distance/altitude deltas, not on a clock, and [trackingGpsStaleness]
+         * is 60 s, so this leaves 4x headroom before the Stat tab's GPS series
+         * would record a gap.
+         */
+        const val DEFAULT_INTERVAL_MS = 15_000L
+
+        /**
+         * Cadence while the Info tab is on screen — the only surface that
+         * renders coordinates and velocity live. Same value the whole app used
+         * to run at, so that readout is unchanged.
+         */
+        const val LIVE_INTERVAL_MS = 5_000L
     }
 }

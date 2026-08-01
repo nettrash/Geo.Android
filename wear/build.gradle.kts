@@ -22,8 +22,13 @@ val sharedVersionCode: Int = (phoneVersionProps.getProperty("versionCode") ?: "1
 // Offset puts the watch versionCode in a range the phone code (low thousands,
 // auto-bumped each build) can never reach, so the two never collide on Play.
 val watchVersionCode: Int = sharedVersionCode + 1_000_000
+// KEEP THIS DEFAULT IN STEP WITH `Geo/build.gradle.kts` — the two modules hold
+// the marketing version independently, so a release that bumps only the phone
+// ships the watch under the previous version (1.2 nearly went out with a 1.1
+// watch AAB). Better: move `versionName` into `version.properties` next to
+// `versionCode` and have both modules fall back to it.
 val resolvedVersionName: String =
-    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.1"
+    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.2"
 
 // Release signing — resolve the SAME keystore the phone module uses, from
 // keystore.properties (dev machines) or GEO_* env vars (CI). Null when neither

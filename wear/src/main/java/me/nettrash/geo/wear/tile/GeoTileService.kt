@@ -60,10 +60,11 @@ import kotlin.coroutines.resume
  *      whenever the paired iPhone has sent us a token via
  *      WearableSnapshotListener.
  *
- * Tile freshness is set to 5 minutes so the system re-invokes us at
- * a reasonable cadence without burning watch battery. The Watch's
+ * Tile freshness is set to [FRESHNESS_MS] so the system re-invokes us
+ * at a reasonable cadence without burning watch battery. The Watch's
  * tile cache also re-renders on demand when the user actually swipes
- * to it.
+ * to it — which is the only moment freshness is actually observable,
+ * and that path is unaffected by the interval.
  */
 class GeoTileService : TileService() {
 
@@ -91,7 +92,22 @@ class GeoTileService : TileService() {
 
     companion object {
         private const val RESOURCES_VERSION = "1"
-        private const val FRESHNESS_MS: Long = 5 * 60 * 1000L
+
+        /**
+         * Background refresh cadence requested from the system.
+         *
+         * Every invocation starts this service's process and powers up the
+         * pressure sensor for a live sample (see [collectData]) — on the
+         * smallest battery in the system. At 5 minutes that was ~288 wakeups a
+         * day for a tile the user may never look at.
+         *
+         * 15 minutes matches BarometerRefreshWorker on the phone and the iOS
+         * widget/complication policies. Nothing observable changes: swiping to
+         * the tile triggers an on-demand `onTileRequest` that takes a fresh
+         * sample regardless of this interval, and a phone-pushed snapshot still
+         * arrives via WearableSnapshotListener in between.
+         */
+        private const val FRESHNESS_MS: Long = 15 * 60 * 1000L
     }
 
     // ─── Data ─────────────────────────────────────────────────────

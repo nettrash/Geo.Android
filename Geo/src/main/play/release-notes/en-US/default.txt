@@ -1,8 +1,0 @@
-Version 1.1
-
-• Fixes a first-launch issue where location and altitude wouldn't start until you reopened the app.
-• More accurate altitude that now agrees across the phone, widget and watch.
-• AR terrain skyline loads instantly and works offline after a first visit.
-• New: Clear history, plus automatic cleanup of very old data.
-• Fixed a crash when opening Directions without Google Maps.
-• Many reliability and battery improvements.

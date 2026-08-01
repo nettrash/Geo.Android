@@ -11,6 +11,7 @@ import me.nettrash.geo.data.model.DataPoint
 import me.nettrash.geo.sensor.PressureSample
 import me.nettrash.geo.sensor.PressureTrend
 import me.nettrash.geo.sensor.StormWarning
+import me.nettrash.geo.util.TrackingGraph
 import me.nettrash.geo.util.TripSample
 import me.nettrash.geo.util.TripStats
 import java.text.SimpleDateFormat
@@ -266,30 +267,24 @@ class HistoryRepository @Inject constructor(
         return Triple(dataSet, min, max)
     }
 
+    /**
+     * Append one real-time tracking sample. [barometerHeight] and [gpsAltitude]
+     * are each optional: a `null` records a NaN gap for that series, so its line
+     * breaks (and auto-scaling ignores it) rather than collapsing to sea level.
+     * This is what keeps the barometer line live when GPS is unavailable.
+     *
+     * The math lives in [TrackingGraph] so it stays pure + unit-testable
+     * (mirrors iOS `History.addTrackingInformation`).
+     */
     fun addTrackingPoint(
         trackingDataSet: MutableList<DataPoint>,
-        barometerHeight: Float,
-        gpsAltitude: Float
-    ): Triple<List<DataPoint>, Float, Float> {
-        if (trackingDataSet.isEmpty()) {
-            while (trackingDataSet.size < amountOfValues) {
-                trackingDataSet.add(DataPoint(listOf(0f, 0f), trackingFormatter.format(Date())))
-            }
-        }
-
-        trackingDataSet.add(DataPoint(listOf(barometerHeight, gpsAltitude), trackingFormatter.format(Date())))
-        while (trackingDataSet.size > amountOfValues) {
-            trackingDataSet.removeAt(0)
-        }
-
-        var min = 0f
-        var max = 10000f
-        val allVals = trackingDataSet.flatMap { it.values }
-        val minVal = allVals.minOrNull() ?: 0f
-        val maxVal = allVals.maxOrNull() ?: 0f
-        if (minVal - 50 > 0f) min = minVal - 50f else if (minVal < 0f) min = minVal
-        if (maxVal + 50 < 10000f) max = maxVal + 50f else if (maxVal > 10000f) max = maxVal
-
-        return Triple(trackingDataSet.toList(), min, max)
-    }
+        barometerHeight: Float?,
+        gpsAltitude: Float?
+    ): Triple<List<DataPoint>, Float, Float> =
+        TrackingGraph.addPoint(
+            trackingDataSet,
+            barometerHeight,
+            gpsAltitude,
+            trackingFormatter.format(Date())
+        )
 }

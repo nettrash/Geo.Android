@@ -1,6 +1,7 @@
 package me.nettrash.geo.util
 
 import com.google.common.truth.Truth.assertThat
+import me.nettrash.geo.ui.nature.alignmentOffsetDegrees
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -103,9 +104,12 @@ class GeoCalculationsTest {
             0.0, 0.0, 0.0,
             0.0, 0.09, 0.0  // ~10.02 km east at the equator
         )
-        // Curvature drop at ~10 km ≈ d² / (2R) ≈ 10000² / 12_742_000 ≈ 7.85 m.
+        // gpsToENU's default radius folds in standard refraction (it feeds AR
+        // sight-lines that must agree with the skyline), so the drop at ~10 km
+        // is d² / (2·R_eff) ≈ 10019² / 14_647_000 ≈ 6.85 m — not the
+        // un-refracted 7.85 m.
         assertThat(enu.up).isLessThan(0.0)
-        assertThat(enu.up).isWithin(2.0).of(-7.85)
+        assertThat(enu.up).isWithin(2.0).of(-6.85)
     }
 
     @Test fun gpsToENUSkipsCurvatureCorrectionUnder5km() {
@@ -117,6 +121,55 @@ class GeoCalculationsTest {
         )
         // Up should be exactly +100 m (no curvature subtraction).
         assertThat(enu.up).isWithin(0.001).of(100.0)
+    }
+
+
+    // ─── Manual compass alignment (ENU rotation + pan conversion) ────
+    //     Mirrors iOS GeometryTests.
+
+    @Test fun rotateENUZeroDegreesIsIdentity() {
+        val r = GeoCalculations.rotateENU(east = 123.4, north = -56.7, clockwiseDegrees = 0.0)
+        assertThat(r.east).isWithin(1e-9).of(123.4)
+        assertThat(r.north).isWithin(1e-9).of(-56.7)
+    }
+
+    @Test fun rotateENUPlus90MapsNorthToEast() {
+        // Compass-sense rotation: +90° takes a due-North point (bearing 0)
+        // to due East (bearing 90) — the overlay shifts clockwise/right.
+        val r = GeoCalculations.rotateENU(east = 0.0, north = 100.0, clockwiseDegrees = 90.0)
+        assertThat(r.east).isWithin(1e-9).of(100.0)
+        assertThat(r.north).isWithin(1e-9).of(0.0)
+    }
+
+    @Test fun rotateENUMinus90MapsNorthToWest() {
+        // −90° takes due North (bearing 0) to due West (bearing 270).
+        val r = GeoCalculations.rotateENU(east = 0.0, north = 100.0, clockwiseDegrees = -90.0)
+        assertThat(r.east).isWithin(1e-9).of(-100.0)
+        assertThat(r.north).isWithin(1e-9).of(0.0)
+    }
+
+    @Test fun alignmentPanConversionSignAndScale() {
+        // 8 dp of rightward pan = +1° of alignment; sign follows the finger.
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = 8.0))
+            .isWithin(1e-9).of(1.0)
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = -16.0))
+            .isWithin(1e-9).of(-2.0)
+        // Pan continues from the latched base, it doesn't restart at zero.
+        assertThat(alignmentOffsetDegrees(base = 5.0, panTranslationDp = 24.0))
+            .isWithin(1e-9).of(8.0)
+    }
+
+    @Test fun alignmentPanConversionClampsToPlusMinus30() {
+        // A screen-crossing fling can't exceed the ±30° clamp in either
+        // direction, whatever the starting base.
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = 10_000.0))
+            .isWithin(1e-9).of(30.0)
+        assertThat(alignmentOffsetDegrees(base = 0.0, panTranslationDp = -10_000.0))
+            .isWithin(1e-9).of(-30.0)
+        assertThat(alignmentOffsetDegrees(base = 29.0, panTranslationDp = 80.0))
+            .isWithin(1e-9).of(30.0)
+        assertThat(alignmentOffsetDegrees(base = -29.0, panTranslationDp = -80.0))
+            .isWithin(1e-9).of(-30.0)
     }
 
     // ─── horizonDistance / project / apparentAltitudeAngle ────────
@@ -221,5 +274,30 @@ class GeoCalculationsTest {
         assertThat(GeoCalculations.cardinalDirection(Double.NaN)).isEqualTo("N")
         assertThat(GeoCalculations.cardinalDirection(Double.POSITIVE_INFINITY)).isEqualTo("N")
         assertThat(GeoCalculations.cardinalDirection(Double.NEGATIVE_INFINITY)).isEqualTo("N")
+    }
+
+    // ── Horizon visibility ── mirrors iOS `HorizonVisibilityTests`. ──────────
+
+    @Test fun tallNearbyPeakIsVisible() {
+        // 3000 m peak 20 km away, observer at 500 m: comfortably over the horizon.
+        assertThat(GeoCalculations.isAboveHorizon(500.0, 3000.0, 20_000.0)).isTrue()
+    }
+
+    @Test fun lowFarPeakBelowSeaLevelObserverIsHidden() {
+        // A 200 m hill 120 km away, observer at the shore (0 m): hidden.
+        assertThat(GeoCalculations.isAboveHorizon(0.0, 200.0, 120_000.0)).isFalse()
+    }
+
+    @Test fun heightExtendsVisibility() {
+        // The same far hill becomes visible from a high vantage.
+        assertThat(GeoCalculations.isAboveHorizon(0.0, 500.0, 150_000.0)).isFalse()
+        assertThat(GeoCalculations.isAboveHorizon(3000.0, 500.0, 150_000.0)).isTrue()
+    }
+
+    @Test fun exactlyAtCombinedHorizonIsVisible() {
+        val r = GeoCalculations.EFFECTIVE_EARTH_RADIUS
+        val d = Math.sqrt(2 * r * 100.0) + Math.sqrt(2 * r * 100.0)
+        assertThat(GeoCalculations.isAboveHorizon(100.0, 100.0, d, r)).isTrue()
+        assertThat(GeoCalculations.isAboveHorizon(100.0, 100.0, d + 1, r)).isFalse()
     }
 }

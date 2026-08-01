@@ -29,8 +29,6 @@ import me.nettrash.geo.offline.OfflinePackRepository
 import java.util.Locale
 import me.nettrash.geo.data.repository.HistoryRepository
 import me.nettrash.geo.data.snapshot.SharedSnapshotStore
-import me.nettrash.geo.ar.ArOcclusionManager
-import me.nettrash.geo.ar.SkylineCalculator
 import me.nettrash.geo.location.LocationManager
 import me.nettrash.geo.sensor.BarometerManager
 import me.nettrash.geo.sensor.DeviceMotionManager
@@ -39,9 +37,11 @@ import me.nettrash.geo.sensor.PressureTrend
 import me.nettrash.geo.sensor.StormWarning
 import me.nettrash.geo.util.AppLog
 import me.nettrash.geo.util.GeoCalculations
+import me.nettrash.geo.util.MagneticConditions
 import me.nettrash.geo.util.MountainLoader
 import me.nettrash.geo.util.PeakFinder
 import me.nettrash.geo.util.QnhRepository
+import me.nettrash.geo.util.SpaceWeatherRepository
 import me.nettrash.geo.util.TripRecordingStore
 import me.nettrash.geo.widget.WidgetUpdater
 import javax.inject.Inject
@@ -57,14 +57,8 @@ class GeoViewModel @Inject constructor(
     private val mountainLoader: MountainLoader,
     private val peakFinder: PeakFinder,
     private val widgetUpdater: WidgetUpdater,
-    /** Exposed publicly so NatureScreen can render its `samples` and
-     *  `isComputing` StateFlows directly — keeps the heavy terrain
-     *  cache scoped to the application, not the ViewModel. */
-    val skylineCalculator: SkylineCalculator,
-    /** Exposed publicly so NatureScreen can feed targets in and
-     *  read back the occluded-ID set. */
-    val occlusionManager: ArOcclusionManager,
-    private val offlinePackRepository: OfflinePackRepository
+    private val offlinePackRepository: OfflinePackRepository,
+    private val spaceWeatherRepository: SpaceWeatherRepository
 ) : ViewModel() {
 
     // Mountain data
@@ -207,6 +201,13 @@ class GeoViewModel @Inject constructor(
         }
             .distinctUntilChanged { a, b -> summitKey(a) == summitKey(b) }
             .onEach { peak -> evaluateSummitCandidate(peak) }
+            .launchIn(viewModelScope)
+
+        // Feed fixes to the magnetic card. The repository itself ignores a
+        // move too small to change the readout, so this stays a plain
+        // hand-off rather than a second throttle to keep in sync.
+        locationManager.location
+            .onEach { spaceWeatherRepository.updatePosition(it) }
             .launchIn(viewModelScope)
 
         // Load initial history
@@ -509,11 +510,27 @@ class GeoViewModel @Inject constructor(
         }
     }
 
-    private fun addTrackingPoint(location: Location) {
+    /**
+     * Record one tracking sample. Each series is included only when it actually
+     * has data right now — a `null` becomes a NaN gap so that line breaks
+     * instead of collapsing to sea level:
+     *
+     *  - Barometer: only on devices that have the sensor (`available`).
+     *  - GPS: [location] is null when the fix is unusable (no fix / stale /
+     *    no altitude) — `LocationManager.usableGpsFix()` decides.
+     *
+     * So with no GPS the barometer line keeps tracking on its own, and on a
+     * device with no barometer only the GPS line is drawn.
+     */
+    private fun addTrackingPoint(location: Location?) {
+        val barometerHeight: Float? =
+            if (barometerManager.available) barometerManager.height.value.toFloat() else null
+        val gpsAltitude: Float? = location?.altitude?.toFloat()
+
         val (data, min, max) = historyRepository.addTrackingPoint(
             trackingMutableData,
-            barometerManager.height.value.toFloat(),
-            location.altitude.toFloat()
+            barometerHeight,
+            gpsAltitude
         )
         _trackingDataSet.value = data
         _trackingMin.value = min
@@ -523,29 +540,34 @@ class GeoViewModel @Inject constructor(
     fun searchForPeaks() {
         val loc = locationManager.location.value ?: return
         viewModelScope.launch {
+            // Barometer-preferred observer altitude (baro is far more reliable
+            // vertically than GPS) for the horizon-visibility cut; 0 means the
+            // sensor hasn't produced a value yet, so fall back to GPS.
+            val obsAlt = barometerManager.height.value.takeIf { it > 0 } ?: loc.altitude
             val results = peakFinder.searchPeaks(
                 loc, _mountainsData.value, _peaks.value,
-                offlinePackRepository.combinedPeaks.value
+                offlinePackRepository.combinedPeaks.value,
+                observerAltitude = obsAlt
             )
             _peaks.value = results
         }
     }
 
     // ─── Offline expedition pack ──────────────────────────────────────
-    // Pre-cached area (OSM peaks + terrain DEM) so AR/skyline survive a
-    // no-signal summit. The repository seeds the live peak/elevation caches
-    // at launch; these just surface its state + actions to the Info screen.
+    // Pre-cached area (named OSM peaks) so the Nature view can label peaks on a
+    // no-signal summit. The repository seeds the live peak cache at launch;
+    // these just surface its state + actions to the Info screen.
     val offlinePacks: StateFlow<List<OfflinePack>> = offlinePackRepository.packs
     val offlinePackDownloading: StateFlow<Boolean> = offlinePackRepository.isDownloading
-    val offlinePackProgress: StateFlow<Float> = offlinePackRepository.progress
     val offlinePackStatus: StateFlow<String> = offlinePackRepository.statusText
+    val offlinePackUpdatingId: StateFlow<String?> = offlinePackRepository.updatingPackId
 
     /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
     fun downloadOfflinePack(name: String, radiusKm: Double) {
         val loc = locationManager.location.value ?: return
-        // Off the Main dispatcher: createPack builds the ~3600-point skyline grid
-        // and merges results on the caller thread (the network calls re-dispatch
-        // to IO themselves), so keep that CPU work off the UI thread.
+        // Off the Main dispatcher: createPack merges/dedupes peaks on the caller
+        // thread (the network calls re-dispatch to IO themselves), so keep that
+        // CPU work off the UI thread.
         viewModelScope.launch(Dispatchers.Default) {
             offlinePackRepository.createPack(name, loc.latitude, loc.longitude, radiusKm)
         }
@@ -562,6 +584,27 @@ class GeoViewModel @Inject constructor(
     }
 
     fun renameOfflinePack(pack: OfflinePack, newName: String) = offlinePackRepository.rename(pack, newName)
+
+    /** Re-download a saved pack's peaks in place (same area) to pick up new
+     *  OpenStreetMap data. Off the Main dispatcher — the merge runs on the caller
+     *  thread (network calls re-dispatch to IO themselves). */
+    fun updateOfflinePack(pack: OfflinePack) {
+        viewModelScope.launch(Dispatchers.Default) {
+            offlinePackRepository.updatePack(pack)
+        }
+    }
+
+    // ─── Magnetic conditions ──────────────────────────────────────────
+    // One global number from NOAA SWPC, resolved against this position by
+    // the pure `Geomagnetic` core. Pass-throughs only — the repository owns
+    // the fetch throttle, the cache and the correction grid.
+    val magneticConditions: StateFlow<MagneticConditions> = spaceWeatherRepository.conditions
+    val spaceWeatherChecking: StateFlow<Boolean> = spaceWeatherRepository.isRefreshing
+
+    /** Fetch the planetary K index unless we already did inside this
+     *  3-hour bin. Driven from the Info tab's ON_RESUME, never from a bare
+     *  `LaunchedEffect` — see the comment on that observer. */
+    fun refreshSpaceWeather() = spaceWeatherRepository.refreshIfStale()
 
     private fun updateWidget() {
         // Throttled push — see WidgetUpdater.pushThrottled for the

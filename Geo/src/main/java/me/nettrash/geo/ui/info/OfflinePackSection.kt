@@ -8,12 +8,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -52,8 +55,8 @@ private val ACCENT = Color(0xFFFF9800)
 fun OfflineExpeditionCard(viewModel: GeoViewModel) {
     val packs by viewModel.offlinePacks.collectAsState()
     val downloading by viewModel.offlinePackDownloading.collectAsState()
-    val progress by viewModel.offlinePackProgress.collectAsState()
     val status by viewModel.offlinePackStatus.collectAsState()
+    val updatingId by viewModel.offlinePackUpdatingId.collectAsState()
     val location by viewModel.locationManager.location.collectAsState()
     var showManager by remember { mutableStateOf(false) }
 
@@ -62,8 +65,10 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
             MonoText(if (packs.isEmpty()) stringResource(R.string.offline_no_areas) else "${packs.size} saved")
         }
         if (downloading) {
+            // A pack is now a single Overpass peak query — no multi-step phase to
+            // chart — so just show the status text, not a 0%-stuck percentage.
             InfoRow(if (status.isEmpty()) stringResource(R.string.offline_downloading) else status) {
-                MonoText("${(progress * 100).toInt()}%")
+                MonoText("…")
             }
         }
         Row(
@@ -85,10 +90,11 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
         OfflinePackManagerDialog(
             packs = packs,
             downloading = downloading,
-            progress = progress,
             status = status,
             hasLocation = location != null,
+            updatingId = updatingId,
             onDownload = { name, radius -> viewModel.downloadOfflinePack(name, radius) },
+            onUpdate = { viewModel.updateOfflinePack(it) },
             onDelete = { viewModel.deleteOfflinePack(it) },
             onRename = { pack, newName -> viewModel.renameOfflinePack(pack, newName) },
             onDismiss = { showManager = false }
@@ -100,10 +106,11 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
 private fun OfflinePackManagerDialog(
     packs: List<OfflinePack>,
     downloading: Boolean,
-    progress: Float,
     status: String,
     hasLocation: Boolean,
+    updatingId: String?,
     onDownload: (String, Double) -> Unit,
+    onUpdate: (OfflinePack) -> Unit,
     onDelete: (OfflinePack) -> Unit,
     onRename: (OfflinePack, String) -> Unit,
     onDismiss: () -> Unit
@@ -176,8 +183,9 @@ private fun OfflinePackManagerDialog(
                             fontSize = 12.sp
                         )
                         Spacer(Modifier.height(6.dp))
+                        // Indeterminate: a peaks-only pack is a single quick query
+                        // with no chartable phases (was a 0%-stuck determinate bar).
                         LinearProgressIndicator(
-                            progress = { progress },
                             modifier = Modifier.fillMaxWidth(),
                             color = ACCENT
                         )
@@ -206,7 +214,7 @@ private fun OfflinePackManagerDialog(
                         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                             Text(pack.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "${pack.peakCount} peaks · ${pack.cellCount} cells · ${pack.radiusKm.toInt()} km",
+                                "${pack.peakCount} peaks · ${pack.radiusKm.toInt()} km",
                                 color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp
                             )
                             Text(
@@ -215,8 +223,23 @@ private fun OfflinePackManagerDialog(
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                if (updatingId == pack.id) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        color = ACCENT,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                TextButton(
+                                    onClick = { onUpdate(pack) },
+                                    enabled = !downloading
+                                ) {
+                                    Text(stringResource(R.string.action_update), color = ACCENT, fontSize = 12.sp)
+                                }
                                 TextButton(onClick = { renameText = pack.name; renamingPack = pack }) {
                                     Text(stringResource(R.string.action_rename), color = ACCENT, fontSize = 12.sp)
                                 }

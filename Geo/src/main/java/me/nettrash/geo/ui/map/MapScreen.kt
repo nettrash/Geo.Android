@@ -81,7 +81,6 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     // Offline expedition pack — region circles + "choose an area on the map" flow.
     val offlinePacks by viewModel.offlinePacks.collectAsState()
     val offlineDownloading by viewModel.offlinePackDownloading.collectAsState()
-    val offlineProgress by viewModel.offlinePackProgress.collectAsState()
     val offlineStatus by viewModel.offlinePackStatus.collectAsState()
     var chooseAreaMode by remember { mutableStateOf(false) }
     var downloadRadiusKm by remember { mutableStateOf(10.0) }
@@ -288,8 +287,9 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                             color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp
                         )
                         Spacer(Modifier.height(6.dp))
+                        // Indeterminate: a peaks-only pack is a single quick query
+                        // with no chartable phases (was a 0%-stuck determinate bar).
                         LinearProgressIndicator(
-                            progress = { offlineProgress },
                             modifier = Modifier.fillMaxWidth(),
                             color = OFFLINE_ACCENT
                         )
@@ -342,12 +342,15 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 title = { Text(pack.name, color = Color.White) },
                 text = {
                     Text(
-                        "${pack.peakCount} peaks · ${pack.cellCount} cells · ${pack.radiusKm.toInt()} km",
+                        "${pack.peakCount} peaks · ${pack.radiusKm.toInt()} km",
                         color = Color.White.copy(alpha = 0.7f)
                     )
                 },
                 confirmButton = {
                     Row {
+                        TextButton(onClick = { viewModel.updateOfflinePack(pack); selectedPack = null }) {
+                            Text(stringResource(R.string.action_update), color = OFFLINE_ACCENT)
+                        }
                         TextButton(onClick = {
                             nameText = pack.name
                             nameAction = MapNameAction.Rename(pack)

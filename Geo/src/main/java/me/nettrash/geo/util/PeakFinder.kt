@@ -30,7 +30,10 @@ import javax.inject.Singleton
  *     them — no placeholder altitudes that float fake peaks above
  *     the horizon.
  *   • Known mountains from the app's bundled mountain data
- *     (`MountainData.highest`, `sevenPeaks`, `snowLeopardOfRussia`).
+ *     (`MountainData.highest`, `sevenPeaks`, `snowLeopardOfRussia`),
+ *     out to [maxPeakRenderDistanceM] rather than [searchRadius] —
+ *     they need no network, and a famous summit is something you
+ *     name from a long way off.
  *
  * Direct port of iOS `Nature/PeakFinder.swift`. Two behaviours that
  * weren't in the previous Android version but matter a lot:
@@ -50,9 +53,27 @@ class PeakFinder @Inject constructor(
 ) {
 
     private val searchRadius = 5_000.0   // 5 km
+
+    /** How far a peak may be from the observer and still be kept for the AR
+     *  overlay. Deliberately MUCH larger than [searchRadius]: the live Overpass
+     *  query only reaches 5 km (to stay polite on the shared endpoint), but a
+     *  downloaded offline pack holds peaks out to 100 km — and in a camera
+     *  peak-identifier the summits you point at are the distant ones on the
+     *  horizon. Capping at `searchRadius × 2` threw ~90 % of a big pack away.
+     *  The AR projection already culls peaks below the horizon / off screen, so
+     *  this is a coverage bound, not a visibility one. Mirrors iOS
+     *  `PeakFinder.maxPeakRenderDistance`. */
+    private val maxPeakRenderDistanceM = 80_000.0   // 80 km
+
     private val minimumSearchDistance = 500.0 // re-search after 500 m of movement
     private val peakTtlMs = 60L * 60L * 1000L  // 1 hour
-    private val maxRetainedPeaks = 200
+
+    /** Max peaks kept in the merged set (nearest-first eviction). Larger than
+     *  before so a dense range doesn't evict the distant flagship summits (the
+     *  whole point of pointing the camera at the horizon) in favour of nearer
+     *  foothills. Only in-view peaks are drawn, so the on-screen count stays
+     *  small regardless. Mirrors iOS. */
+    private val maxRetainedPeaks = 300
 
     private var lastSearchLocation: Location? = null
     private val json = Json { ignoreUnknownKeys = true }
@@ -71,8 +92,13 @@ class PeakFinder @Inject constructor(
         location: Location,
         mountainsData: MountainData?,
         currentPeaks: List<NearbyPeak>,
-        offlinePeaks: List<NearbyPeak> = emptyList()
+        offlinePeaks: List<NearbyPeak> = emptyList(),
+        observerAltitude: Double? = null
     ): List<NearbyPeak> {
+        // Observer altitude for the horizon-visibility cut. Prefer the caller's
+        // (barometer-preferred) value — GPS altitude can be tens of metres off,
+        // or garbage-low, which would wrongly hide visible peaks.
+        val obsAlt = observerAltitude ?: location.altitude
         val last = lastSearchLocation
         if (last != null &&
             last.distanceTo(location) < minimumSearchDistance &&
@@ -81,7 +107,7 @@ class PeakFinder @Inject constructor(
             // No movement — just refresh distance/bearing of the
             // existing set against the latest location so visual
             // fade-by-distance stays accurate.
-            return refreshGeometry(currentPeaks, location)
+            return refreshGeometry(currentPeaks, location, obsAlt)
         }
         lastSearchLocation = location
 
@@ -120,9 +146,12 @@ class PeakFinder @Inject constructor(
             for (p in currentPeaks) byId[p.id] = p
             for (p in freshPeaks) byId[p.id] = p
 
-            // Hysteresis + TTL: drop entries far outside the search
-            // radius OR not seen in a while.
-            val dropRadius = searchRadius * 2
+            // Keep peaks out to the render distance (not just the 5 km search
+            // radius) so downloaded offline packs show distant horizon summits,
+            // then age out anything not re-confirmed within the TTL, and drop
+            // peaks hidden below the Earth's bulge (only keep what's really
+            // visible from here).
+            val dropRadius = maxPeakRenderDistanceM
             val merged = byId.values
                 .filter { peak ->
                     val pl = Location("").apply {
@@ -130,7 +159,8 @@ class PeakFinder @Inject constructor(
                         longitude = peak.longitude
                     }
                     val d = location.distanceTo(pl).toDouble()
-                    d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs
+                    d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs &&
+                        GeoCalculations.isAboveHorizon(obsAlt, peak.altitude, d)
                 }
                 .map { peak ->
                     val d = GeoCalculations.distanceBetween(
@@ -152,14 +182,14 @@ class PeakFinder @Inject constructor(
 
     private fun refreshGeometry(
         peaks: List<NearbyPeak>,
-        location: Location
+        location: Location,
+        obsAlt: Double
     ): List<NearbyPeak> {
-        // Apply the same TTL + drop-radius eviction the full-search branch
-        // does, so a stationary user (who only ever takes this path) still
-        // ages out peaks that haven't been re-confirmed within peakTtlMs or
-        // have drifted outside the drop radius.
+        // Apply the same TTL + drop-radius + horizon-visibility eviction the
+        // full-search branch does, so a stationary user (who only ever takes this
+        // path) still ages out peaks that have drifted out of view.
         val now = System.currentTimeMillis()
-        val dropRadius = searchRadius * 2
+        val dropRadius = maxPeakRenderDistanceM
         return peaks
             .filter { peak ->
                 val pl = Location("").apply {
@@ -167,7 +197,8 @@ class PeakFinder @Inject constructor(
                     longitude = peak.longitude
                 }
                 val d = location.distanceTo(pl).toDouble()
-                d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs
+                d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs &&
+                    GeoCalculations.isAboveHorizon(obsAlt, peak.altitude, d)
             }
             .map { peak ->
                 val d = GeoCalculations.distanceBetween(
@@ -329,7 +360,13 @@ class PeakFinder @Inject constructor(
                 val distance = GeoCalculations.distanceBetween(
                     location.latitude, location.longitude, lat, lon
                 )
-                if (distance > searchRadius) continue
+                // Bound by the render distance, NOT the 5 km Overpass radius.
+                // These summits are bundled, so they cost no network at all —
+                // and they're exactly the ones you look at from far away. At
+                // 5 km a curated peak only appeared when you were already
+                // standing on it, which is where you cannot see it. The merge
+                // in searchPeaks still applies the horizon and TTL cuts.
+                if (distance > maxPeakRenderDistanceM) continue
 
                 val bearing = GeoCalculations.bearing(
                     location.latitude, location.longitude, lat, lon

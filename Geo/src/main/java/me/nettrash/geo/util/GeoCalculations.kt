@@ -21,6 +21,50 @@ object GeoCalculations {
      *  need to do their own ray/curvature math (e.g. skyline). */
     const val EARTH_RADIUS = 6_371_000.0
 
+    /** Standard terrestrial refraction coefficient (k ≈ 0.13). Light
+     *  grazing the surface bends *down* toward the Earth, so distant
+     *  terrain appears HIGHER than pure geometry suggests. Surveyors
+     *  model this by replacing the Earth radius with an effective
+     *  radius R/(1−k) wherever a curvature drop is computed. */
+    const val REFRACTION_COEFFICIENT = 0.13
+
+    /** Effective Earth radius with standard refraction folded in
+     *  (~7 323 km). Every curvature-drop term along the AR sightline —
+     *  the skyline picker, the horizon overlay, the peak welds and the
+     *  AR markers — must use THIS radius, and the same one everywhere,
+     *  or distant ranges render visibly too low (and the pieces detach
+     *  from each other). Mirrors iOS `Geometry.effectiveEarthRadius`. */
+    const val EFFECTIVE_EARTH_RADIUS = EARTH_RADIUS / (1 - REFRACTION_COEFFICIENT)
+
+    /** Horizontal-only ENU pair returned by [rotateENU]. */
+    data class ENUHorizontal(val east: Double, val north: Double)
+
+    /**
+     * Rotate a local ENU horizontal offset about the vertical axis by
+     * [clockwiseDegrees], in the COMPASS sense: positive degrees move a
+     * point at bearing θ to bearing θ + degrees (clockwise when viewed
+     * from above — N→E→S→W). Backs the manual compass-alignment knob
+     * (`ArSceneController.userAlignmentDeg`): rotating all drawn content
+     * to larger bearings shifts the overlay RIGHT on screen. (The
+     * controller's own ARCore-frame rotation is the INVERSE sense — it
+     * maps β to β − yaw — which is why it composes the knob by
+     * SUBTRACTING it from `frameYawOffsetDeg`; see `appliedYawOffsetDeg`.)
+     *
+     *     east'  = east·cos + north·sin
+     *     north' = north·cos − east·sin
+     *
+     * (Check: +90° maps due-North (0, d) to due-East (d, 0).) Pure so
+     * the sign convention is pinned by unit tests. Mirrors iOS
+     * `Geometry.rotateENU`.
+     */
+    fun rotateENU(east: Double, north: Double, clockwiseDegrees: Double): ENUHorizontal {
+        if (clockwiseDegrees == 0.0) return ENUHorizontal(east, north)
+        val r = Math.toRadians(clockwiseDegrees)
+        val c = cos(r)
+        val s = sin(r)
+        return ENUHorizontal(east * c + north * s, north * c - east * s)
+    }
+
     /**
      * Calculate bearing (degrees) from one coordinate to another
      */
@@ -39,13 +83,19 @@ object GeoCalculations {
 
     /**
      * Convert GPS to local ENU (East-North-Up) offset in meters.
-     * Includes Earth curvature compensation for points >5km away.
+     * Includes Earth curvature compensation for points >5km away —
+     * without it distant peaks visibly "float" above the horizon. The
+     * default [radius] folds in standard refraction: every caller is an
+     * AR sight-line projection (peak markers, occlusion, tap hit-tests),
+     * and those must agree with the skyline, which is
+     * refraction-corrected too.
      */
     data class ENUOffset(val east: Double, val north: Double, val up: Double)
 
     fun gpsToENU(
         fromLat: Double, fromLon: Double, fromAlt: Double,
-        toLat: Double, toLon: Double, toAlt: Double
+        toLat: Double, toLon: Double, toAlt: Double,
+        radius: Double = EFFECTIVE_EARTH_RADIUS
     ): ENUOffset {
         val latRef = Math.toRadians(fromLat)
         val metersPerDegreeLon = METERS_PER_DEGREE_LAT * cos(latRef)
@@ -57,11 +107,32 @@ object GeoCalculations {
         val east = dLon * metersPerDegreeLon
 
         val horizontalDist = sqrt(north * north + east * east)
-        val curvatureDrop = (horizontalDist * horizontalDist) / (2.0 * EARTH_RADIUS)
+        val curvatureDrop = (horizontalDist * horizontalDist) / (2.0 * radius)
 
         val up = (toAlt - fromAlt) - if (horizontalDist > 5000) curvatureDrop else 0.0
 
         return ENUOffset(east, north, up)
+    }
+
+    /**
+     * Whether a peak of height [targetAltitude] is above the visible horizon for
+     * an observer at [observerAltitude], [distance] metres away — the classic
+     * two-tangent test: the peak clears the Earth's bulge when the distance is no
+     * more than the sum of the two horizon distances
+     * `√(2·R·h_obs) + √(2·R·h_peak)`. Uses the refraction-corrected effective
+     * radius so the cut matches the drawn geometric horizon. Ignores intervening
+     * terrain (which would need a DEM). Kept identical to iOS
+     * `Geometry.isAboveHorizon`.
+     */
+    fun isAboveHorizon(
+        observerAltitude: Double,
+        targetAltitude: Double,
+        distance: Double,
+        radius: Double = EFFECTIVE_EARTH_RADIUS
+    ): Boolean {
+        val ho = maxOf(observerAltitude, 0.0)
+        val hp = maxOf(targetAltitude, 0.0)
+        return distance <= sqrt(2 * radius * ho) + sqrt(2 * radius * hp)
     }
 
     /**

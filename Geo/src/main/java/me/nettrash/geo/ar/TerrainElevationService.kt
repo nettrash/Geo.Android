@@ -49,10 +49,15 @@ class TerrainElevationService @Inject constructor(
 
     private data class GridKey(val lat: Int, val lon: Int)
 
-    /** Largest number of grid cells kept in memory and on disk.
-     *  At ~110 m spacing this covers a wide area while bounding the
-     *  cache file; the least-recently-used cells are evicted first. */
-    private val maxCacheEntries = 8000
+    /** Largest number of grid cells kept in memory and on disk; the
+     *  least-recently-used cells are evicted first. Each entry is a
+     *  ~110 m grid cell at ~24 bytes on disk, so even 50 000 entries is
+     *  ~1.2 MB. The cap must comfortably hold several full skyline
+     *  passes: one pass is now ~8 500 distinct cells (dense schedule +
+     *  refinement round), and a cap smaller than a few passes would
+     *  make the LRU evict its own working set — every recompute would
+     *  re-fetch everything. Mirrors iOS `cacheCap`. */
+    private val maxCacheEntries = 50_000
 
     /** Cache. Guarded by [cacheLock] because skyline computation
      *  fans out async tasks that share the same instance.
@@ -66,14 +71,15 @@ class TerrainElevationService @Inject constructor(
     }
     private val cacheLock = Mutex()
 
-    /** Cells from downloaded **offline expedition packs**, keyed exactly
-     *  like [cache]. Consulted on every cache miss and NEVER LRU-evicted,
-     *  so a prefetched area's terrain skyline keeps resolving from cache
-     *  with no signal. Replaced wholesale from the saved packs by
-     *  `OfflinePackRepository` at launch and whenever a pack changes. Total
-     *  memory is bounded because each pack caps its cell count at
-     *  [SkylineCalculator.OFFLINE_MAX_DEM_CELLS] (≈ cap × number of packs). */
-    @Volatile private var pinned: Map<GridKey, Double> = emptyMap()
+    // NOTE: this service used to also hold *pinned* DEM layers (a fine ~110 m
+    // core plus ~550 m / ~2.2 km far-terrain rings) seeded from offline
+    // expedition packs, so the terrain skyline could resolve a full 200 km
+    // panorama with no signal. The skyline was removed from the Nature tab, and
+    // with it the pinned layers, `setPinned(...)` and the pack DEM prefetch.
+    //
+    // What remains is what [PeakFinder] and [QnhRepository] actually need:
+    // resolve the elevation of a handful of specific points on demand (e.g. an
+    // OSM peak node carrying no `ele` tag). That's served by the LRU cache below.
 
     /** Durable backing for [cache] so terrain elevations survive process
      *  death and offline sessions. */
@@ -129,13 +135,7 @@ class TerrainElevationService @Inject constructor(
             for ((i, p) in points.withIndex()) {
                 val key = gridKey(p.first, p.second)
                 val cached = cache[key]
-                if (cached != null) {
-                    results[i] = cached
-                } else {
-                    // Offline-pack cell — durable, never LRU-evicted.
-                    val pin = pinned[key]
-                    if (pin != null) results[i] = pin else pending.add(i to key)
-                }
+                if (cached != null) results[i] = cached else pending.add(i to key)
             }
         }
         if (pending.isEmpty()) return@withContext results.toList()
@@ -179,13 +179,6 @@ class TerrainElevationService @Inject constructor(
     suspend fun clearCache() {
         cacheLock.withLock { cache.clear() }
         store.save(emptyList())
-    }
-
-    /** Replace the *pinned* offline-pack cells (consulted on every cache
-     *  miss, never evicted). Rebuilt wholesale by `OfflinePackRepository`,
-     *  so passing the union of all packs' cells is the whole contract. */
-    fun setPinned(cells: List<ElevationCacheStore.Entry>) {
-        pinned = cells.associate { GridKey(it.lat, it.lon) to it.elev }
     }
 
     /** Snapshot the cache (under the lock) in LRU order and persist it.
