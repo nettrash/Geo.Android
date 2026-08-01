@@ -30,7 +30,10 @@ import javax.inject.Singleton
  *     them — no placeholder altitudes that float fake peaks above
  *     the horizon.
  *   • Known mountains from the app's bundled mountain data
- *     (`MountainData.highest`, `sevenPeaks`, `snowLeopardOfRussia`).
+ *     (`MountainData.highest`, `sevenPeaks`, `snowLeopardOfRussia`),
+ *     out to [maxPeakRenderDistanceM] rather than [searchRadius] —
+ *     they need no network, and a famous summit is something you
+ *     name from a long way off.
  *
  * Direct port of iOS `Nature/PeakFinder.swift`. Two behaviours that
  * weren't in the previous Android version but matter a lot:
@@ -357,7 +360,13 @@ class PeakFinder @Inject constructor(
                 val distance = GeoCalculations.distanceBetween(
                     location.latitude, location.longitude, lat, lon
                 )
-                if (distance > searchRadius) continue
+                // Bound by the render distance, NOT the 5 km Overpass radius.
+                // These summits are bundled, so they cost no network at all —
+                // and they're exactly the ones you look at from far away. At
+                // 5 km a curated peak only appeared when you were already
+                // standing on it, which is where you cannot see it. The merge
+                // in searchPeaks still applies the horizon and TTL cuts.
+                if (distance > maxPeakRenderDistanceM) continue
 
                 val bearing = GeoCalculations.bearing(
                     location.latitude, location.longitude, lat, lon

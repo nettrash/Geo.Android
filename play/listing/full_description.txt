@@ -1,44 +1,48 @@
 Geo turns your phone into a pocket altimeter, peak finder, and field-guide overlay — all running locally, with no account, no ads, and no tracking.
 
-Open the Map tab and Geo pins your position alongside famous peaks nearby. Open the Nature tab and it queries OpenStreetMap to list every named summit within 5 km, sorted by distance, with elevation and bearing; download an area first and named peaks keep appearing out to ~80 km with no signal. Open the AR tab and your camera shows peak names floating over the actual mountains in front of you.
+Open the Nature tab and the camera names the mountains in front of you. Open the Map tab and Geo pins your position alongside the known peaks around you. Open the Info tab for your altitude, the air pressure around you, today's sun times, and what a geomagnetic storm is doing to your compass.
 
 LIVE ALTITUDE
 
-Geo cross-references the device barometer with GPS-derived altitude, side by side. The barometer is more responsive than GPS for short-term elevation changes; GPS is more reliable as a long-term reference. Seeing both together — and the difference between them — is more informative than either alone.
+Geo shows the device barometer's altitude and the GPS-derived altitude side by side. The barometer responds faster to a short climb; GPS is the more reliable long-term reference. Seeing both — and the gap between them — tells you more than either alone.
+
+NAME THE PEAKS YOU SEE
+
+Hold the camera up on the Nature tab and every mountain gets a label — name and height — on a thin line rising from the real summit. Only peaks that clear your horizon are labelled, and a minimum-altitude slider hides the small hills so you keep just the big mountains. Tap a peak for its distance, bearing and directions. Drag sideways to nudge the overlay onto the real ridge when the compass is a few degrees off. The shutter captures the view with the labels drawn on, ready to share. Download an area first, from the Info tab, and it all keeps working with no signal, out to ~80 km. Needs a device that supports ARCore.
+
+MAGNETIC CONDITIONS
+
+A card on the Info tab reads the planetary K index from NOAA's Space Weather Prediction Center — measured by ground observatories, not by your phone — and works out the local consequences on the device: the storm level on the G scale, how far a storm can push your compass beyond its normal error, whether GPS may degrade where you are, and whether the auroral oval reaches you tonight, with the darkness window and the bearing to look along. Aurora alerts are opt-in and off by default. The request to NOAA is a fixed URL with no parameters — none of it tells anyone where you are.
 
 PEAKS
 
-• The Seven Summits (Everest, Aconcagua, Denali, Kilimanjaro, Elbrus, Vinson, Carstensz / Kosciuszko) with photos and elevations.
-• The world's 100 tallest mountains.
-• The Snow Leopards collection (the five 7000+ m peaks of the former USSR).
+• The Seven Summits — both versions of the list, plus Mont Blanc — with photos and elevations.
+• Over a hundred of the world's tallest mountains.
+• The Snow Leopard of Russia collection — nine summits from the Caucasus to Kamchatka and the Altai.
 • Nearby peaks pulled live from OpenStreetMap (free, no key).
 
 MAP
 
-Standard Google Maps view pinned with your current position alongside each known peak in your area. Tap any pin for elevation and a quick info card.
-
-AR
-
-Where your device supports ARCore, point the camera at the horizon. Geo overlays peak names on the live feed, anchored by GPS, the barometer, and the device IMU. Useful for matching what you can see to what's in your pocket atlas.
+A Google Maps view with your position and every known peak in your area pinned. Tap a pin for its elevation and a quick info card.
 
 HISTORY & WIDGET
 
-The barometer is sampled in the background and stored in a local Room database, so the Stat tab can plot pressure trends over hours and days — useful for spotting incoming weather changes.
+The barometer is sampled in the background and kept in a local database, so the Stat tab plots pressure trends over hours and days — useful for spotting weather on the way.
 
-A Glance home-screen widget surfaces your current pressure, altitude, position and speed without opening the app.
+A home-screen widget shows your current pressure, altitude, position and speed without opening the app.
 
 PRIVACY
 
-Geo doesn't collect personal information, doesn't create accounts, and uses no analytics, advertising, or trackers. The local pressure history never leaves the device. The Map view uses Google's Maps SDK; the peak search sends approximate coordinates + a search radius to OpenStreetMap's free Overpass API; ground elevations for the AR view and the local reference pressure (QNH) that calibrates the altimeter come from the free Open-Meteo API on those same approximate coordinates. The Magnetic Conditions card fetches NOAA's planetary K index from a fixed URL with no location, no identifiers and no parameters of any kind — byte-identical for every user of the app. Those calls happen on your behalf to render features you asked for; no data is transmitted to servers operated by us — we have no servers.
+Geo doesn't collect personal information, doesn't create accounts, and uses no analytics, advertising, or trackers. Your pressure history, trips and summits stay on the device. What goes out goes on your behalf, to render something you asked for: Google's Maps SDK draws the map; OpenStreetMap's free Overpass API and Open-Meteo return peak names, ground elevation and the reference pressure that calibrates the altimeter, on approximate coordinates; and NOAA's planetary K index arrives from a fixed URL with no parameters of any kind — byte-identical for every user, carrying nothing about you. No data goes to a server we run; we have no servers.
 
 The full privacy policy is at https://nettrash.me/play/geo/privacy.html.
 
 PERMISSIONS
 
 • Location (precise) — to show your position and find nearby peaks.
-• Camera — for the AR view; frames are processed on-device by ARCore.
+• Camera — for the Nature view; frames are processed on-device by ARCore.
 • High-rate sensors — to read the device's barometer and orientation.
-• Notifications — for the storm warning, and for aurora alerts if you switch them on.
+• Notifications — for the storm warning, and aurora alerts if you switch them on.
 
 Geo does not request permission to read your contacts, calendar, photos, microphone, phone state, or installed-app list.
 

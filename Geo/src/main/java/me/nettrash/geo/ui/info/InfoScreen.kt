@@ -491,8 +491,11 @@ fun InfoCard(watermark: String, content: @Composable () -> Unit) {
 }
 
 /** Data-source attribution footer for the Info tab. Credits the public data
- *  providers the app depends on (fair-use / attribution courtesy for Open-Meteo
- *  and OpenStreetMap, plus Google's frameworks). */
+ *  providers the app depends on. OpenStreetMap is the one that isn't a
+ *  courtesy: its data is licensed under the ODbL, which requires both the
+ *  contributor credit and the licence to be named wherever the data is shown —
+ *  so the peaks line carries both. Open-Meteo, NOAA SWPC and Google's
+ *  frameworks are credited as good manners. */
 @Composable
 private fun DataSourcesCredit() {
     Column(
@@ -502,7 +505,7 @@ private fun DataSourcesCredit() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Data sources", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Text("Peaks © OpenStreetMap contributors (Overpass)", color = Color.Gray, fontSize = 11.sp)
+        Text("Peaks © OpenStreetMap contributors, ODbL (Overpass)", color = Color.Gray, fontSize = 11.sp)
         Text("Elevation & weather by Open-Meteo", color = Color.Gray, fontSize = 11.sp)
         Text("Space weather by NOAA SWPC (public domain)", color = Color.Gray, fontSize = 11.sp)
         Text("Magnetic coordinates from IGRF-14 and AACGM-v2", color = Color.Gray, fontSize = 11.sp)
