@@ -8,6 +8,35 @@ one recorded here.
 
 ## [Unreleased]
 
+## [1.3] — 2026-11-20
+
+Peak discovery stops lying to you. Two separate defects had the Nature view
+showing an empty horizon — one in what the app asked the network, one in what
+the app remembered about your own filter. Parity with iOS 1.3.
+
+### Fixed
+- **An Overpass outage no longer means "there are no peaks here."** Peak
+  discovery asked one hard-coded instance and turned every failure — `502 "this
+  Overpass API server is currently at capacity"`, `429`, a timeout — into an
+  empty result, silently. It now works through the public mirrors from a
+  rotating start, logs the status code of every mirror it had to give up on,
+  and keeps the peaks it already has when nothing answers.
+- **A failed search is no longer a cached result.** Previously the failure
+  stamped the search location, so nothing retried until you walked 500 m, and
+  the one-hour TTL then dropped every peak that failure could not re-confirm —
+  your downloaded offline-pack peaks included. A result is now reused by age as
+  well as by distance, so standing still still refreshes; retries wait out a
+  backoff instead of hammering a loaded endpoint; and the last good result is
+  kept on disk for a week, restored marked **possibly outdated** rather than
+  replaced by nothing.
+- **A `0` in the top bar finally says why.** The minimum-altitude floor is
+  absolute and persisted, and the track on the right edge accepted a plain tap,
+  so one stray touch could set a multi-kilometre floor and keep it across
+  launches — which hides every peak in flat country (nothing near Belgrade
+  reaches 511 m) while looking identical to a failed search. The floor now
+  needs a real drag, the count shows `(N hidden)` while it is hiding anything,
+  and a pill offers a one-tap **Show all** when it hides everything.
+
 ## [1.2] — 2026-08-01
 
 A Nature-view rebuild focused on one thing — naming the peaks you can see — a
