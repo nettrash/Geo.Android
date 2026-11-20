@@ -278,6 +278,12 @@
 
     <!-- AR Nature view -->
     <string name="ar_about_title">About the Nature view</string>
+    <!-- Peak-count honesty: the floor is hiding peaks, or the set shown is not
+         a confirmed-current answer (#25, #26). -->
+    <string name="nature_peaks_possibly_outdated">possibly outdated</string>
+    <string name="nature_peaks_show_all">Show all</string>
+    <string name="nature_peaks_hidden_count">(%1$d hidden)</string>
+    <string name="nature_peaks_floor_hides_all">%1$d m floor hides all %2$d peaks</string>
     <string name="ar_about_undetermined">The Nature view shows nearby mountain peaks overlaid on the camera. Continue to choose whether to grant camera access.</string>
     <string name="ar_about_denied">The Nature view shows nearby mountain peaks overlaid on the camera. Camera access is currently turned off for Geo. You can re-enable it in Android Settings and return to this tab.</string>
     <string name="ar_unavailable_title">ARCore Not Available</string>
