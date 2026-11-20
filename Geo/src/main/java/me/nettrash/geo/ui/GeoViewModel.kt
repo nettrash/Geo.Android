@@ -140,6 +140,16 @@ class GeoViewModel @Inject constructor(
     private val _peaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
     val peaks: StateFlow<List<NearbyPeak>> = _peaks.asStateFlow()
 
+    /** True while [peaks] is the last known set rather than a confirmed
+     *  current answer (restored from disk, or surviving a failed search). */
+    private val _peaksAreStale = MutableStateFlow(false)
+    val peaksAreStale: StateFlow<Boolean> = _peaksAreStale.asStateFlow()
+
+    /** Why the last peak search failed (`"overpass-api.de: HTTP 502; …"`), for
+     *  logcat and the console. Cleared by the next success. */
+    private val _peakSearchError = MutableStateFlow<String?>(null)
+    val peakSearchError: StateFlow<String?> = _peakSearchError.asStateFlow()
+
     private val trackingMutableData = mutableListOf<DataPoint>()
 
     init {
@@ -544,12 +554,18 @@ class GeoViewModel @Inject constructor(
             // vertically than GPS) for the horizon-visibility cut; 0 means the
             // sensor hasn't produced a value yet, so fall back to GPS.
             val obsAlt = barometerManager.height.value.takeIf { it > 0 } ?: loc.altitude
-            val results = peakFinder.searchPeaks(
+            val result = peakFinder.searchPeaks(
                 loc, _mountainsData.value, _peaks.value,
                 offlinePackRepository.combinedPeaks.value,
                 observerAltitude = obsAlt
             )
-            _peaks.value = results
+            _peaks.value = result.peaks
+            // "These are the peaks we have, but they are not confirmed
+            // current" — restored from disk, or kept alive through a failed
+            // search. The Nature view says so instead of showing a bare count
+            // that reads the same as a live result.
+            _peaksAreStale.value = result.stale
+            _peakSearchError.value = result.error
         }
     }
 
