@@ -69,6 +69,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
@@ -501,7 +502,11 @@ private fun ArScene(
                 // read as "no peaks found".
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    stringResource(R.string.nature_peaks_hidden_count, hiddenPeakCount),
+                    pluralStringResource(
+                        R.plurals.nature_peaks_hidden_count,
+                        hiddenPeakCount,
+                        hiddenPeakCount
+                    ),
                     color = Color.White.copy(alpha = 0.75f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -627,8 +632,9 @@ private fun ArScene(
                     )
                     Spacer(Modifier.width(5.dp))
                     Text(
-                        stringResource(
-                            R.string.nature_peaks_floor_hides_all,
+                        pluralStringResource(
+                            R.plurals.nature_peaks_floor_hides_all,
+                            peaks.size,
                             minPeakAltitude.toInt(),
                             peaks.size
                         ),
