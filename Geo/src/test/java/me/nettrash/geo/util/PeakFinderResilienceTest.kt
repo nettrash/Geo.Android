@@ -1,0 +1,91 @@
+package me.nettrash.geo.util
+
+import com.google.common.truth.Truth.assertThat
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * Covers the two rules that turned a loaded Overpass instance into a
+ * permanently empty Nature view (#26): when a previous nearby-peak result may
+ * be reused, and the mirror list a search fails over across.
+ *
+ * Both live on [PeakFinder]'s companion and are pure, so no network and no
+ * location are involved — exactly the behaviours a live device cannot
+ * reproduce deterministically. Mirrors iOS `PeakFinderResilienceTests`.
+ */
+@RunWith(RobolectricTestRunner::class)
+class PeakFinderResilienceTest {
+
+    /** Mirrors the production tuning; the tests describe the *rules*, not the
+     *  numbers, so retuning the constants in `PeakFinder` doesn't need edits. */
+    private val maxCacheAgeMs = 15L * 60L * 1000L
+    private val retryBackoffMs = 60L * 1000L
+    private val now = 1_700_000_000_000L
+
+    private fun canReuse(successAgeMs: Long?, failureAgeMs: Long?) = PeakFinder.canReuseResult(
+        nowMs = now,
+        lastSuccessAtMs = successAgeMs?.let { now + it },
+        lastFailureAtMs = failureAgeMs?.let { now + it },
+        maxCacheAgeMs = maxCacheAgeMs,
+        retryBackoffMs = retryBackoffMs
+    )
+
+    @Test fun nothingSearchedYetIsNeverReused() {
+        assertThat(canReuse(successAgeMs = null, failureAgeMs = null)).isFalse()
+    }
+
+    @Test fun freshResultIsReusedWithoutAskingTheNetwork() {
+        assertThat(canReuse(successAgeMs = -60_000L, failureAgeMs = null)).isTrue()
+    }
+
+    /** The regression: the old guard only looked at distance, so a stationary
+     *  user never refetched — and with Overpass unhealthy that meant forever. */
+    @Test fun staleResultIsRefetchedEvenWithoutMovement() {
+        assertThat(canReuse(successAgeMs = -2 * maxCacheAgeMs, failureAgeMs = null)).isFalse()
+    }
+
+    /** Once stale, the result is still shown while the backoff from a failed
+     *  attempt runs: the peaks on screen are never dropped for nothing, and a
+     *  loaded endpoint is not hammered on every refresh tick. */
+    @Test fun staleResultIsKeptWhileRetryBackoffRuns() {
+        assertThat(canReuse(-2 * maxCacheAgeMs, -retryBackoffMs / 2)).isTrue()
+    }
+
+    @Test fun staleResultIsRefetchedOnceBackoffExpires() {
+        assertThat(canReuse(-2 * maxCacheAgeMs, -2 * retryBackoffMs)).isFalse()
+    }
+
+    /** Nothing has ever loaded and the last attempt failed seconds ago: the
+     *  screen stays as it is instead of firing another request at a loaded
+     *  mirror on every refresh tick. This is the cold-start-in-an-outage case,
+     *  and the backoff is the only thing that keeps the client from burying a
+     *  shared public endpoint. */
+    @Test fun failedSearchIsNotRetriedUntilBackoffExpiresWithNothingOnScreen() {
+        assertThat(canReuse(successAgeMs = null, failureAgeMs = -retryBackoffMs / 2)).isTrue()
+        assertThat(canReuse(successAgeMs = null, failureAgeMs = -2 * retryBackoffMs)).isFalse()
+    }
+
+    @Test fun searchFailsOverAcrossDistinctMirrors() {
+        assertThat(PeakFinder.overpassEndpoints).isNotEmpty()
+        assertThat(PeakFinder.overpassEndpoints.size).isAtLeast(3)
+        val hosts = PeakFinder.overpassEndpoints.map { it.substringAfter("://").substringBefore('/') }
+        assertThat(hosts.toSet()).hasSize(PeakFinder.overpassEndpoints.size)
+        assertThat(PeakFinder.overpassEndpoints).contains("https://overpass-api.de/api/interpreter")
+        for (endpoint in PeakFinder.overpassEndpoints) {
+            assertThat(endpoint).endsWith("/api/interpreter")
+        }
+    }
+
+    @Test fun rotationVisitsEveryMirrorExactlyOnce() {
+        val count = PeakFinder.overpassEndpoints.size
+        for (start in listOf(-4, -1, 0, 1, count, count + 7)) {
+            val rotated = PeakFinder.rotatedEndpoints(start)
+            assertThat(rotated).hasSize(count)
+            assertThat(rotated.toSet())
+                .containsExactlyElementsIn(PeakFinder.overpassEndpoints.toSet())
+        }
+        assertThat(PeakFinder.rotatedEndpoints(1).first())
+            .isEqualTo(PeakFinder.overpassEndpoints[1])
+    }
+}
