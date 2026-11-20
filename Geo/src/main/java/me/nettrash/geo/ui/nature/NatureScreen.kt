@@ -149,7 +149,6 @@ fun NatureScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
 
     val location by viewModel.locationManager.location.collectAsState()
     val peaks by viewModel.peaks.collectAsState()
-    val peaksAreStale by viewModel.peaksAreStale.collectAsState()
     // AR holds the phone UPRIGHT (camera at the horizon), so use the camera-axis
     // azimuth, not the flat top-edge `heading` (that one gimbal-locks when the
     // phone is vertical, which mis-aligned the skyline and the N/E/S/W markers).
@@ -252,6 +251,9 @@ private fun ArScene(
     // the projection choke point and every consumer shift coherently).
     val userAlignmentDeg by controller.userAlignmentDeg.collectAsState()
     val barometerHeight by viewModel.barometerManager.height.collectAsState()
+    // Peaks are the last known set (restored from disk, or surviving a failed
+    // search) rather than a confirmed-current answer — the top bar says so.
+    val peaksAreStale by viewModel.peaksAreStale.collectAsState()
 
     // ONE observer altitude for every AR consumer (the horizon line, the marker
     // projection and the tap hit-test), so none can vertically detach from the

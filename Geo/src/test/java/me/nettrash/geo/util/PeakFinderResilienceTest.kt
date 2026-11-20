@@ -2,8 +2,6 @@ package me.nettrash.geo.util
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 
 /**
  * Covers the two rules that turned a loaded Overpass instance into a
@@ -13,8 +11,14 @@ import org.robolectric.RobolectricTestRunner
  * Both live on [PeakFinder]'s companion and are pure, so no network and no
  * location are involved — exactly the behaviours a live device cannot
  * reproduce deterministically. Mirrors iOS `PeakFinderResilienceTests`.
+ *
+ * Plain JUnit rather than the suite's usual `RobolectricTestRunner`: nothing
+ * here touches `android.*` (both subjects are companion functions, and the only
+ * Android type in the signature is reached through the companion), so the tests
+ * run on the JVM without a Robolectric sandbox — which also keeps them running
+ * on JDKs new enough that the pinned Robolectric refuses to instrument
+ * (`Unsupported class file major version`).
  */
-@RunWith(RobolectricTestRunner::class)
 class PeakFinderResilienceTest {
 
     /** Mirrors the production tuning; the tests describe the *rules*, not the

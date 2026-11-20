@@ -482,7 +482,7 @@ class PeakFinder @Inject constructor(
      * `RetryInterceptor` on [client] still owns the single 429/5xx retry and the
      * inter-request spacing.
      */
-    private fun attemptOverpass(
+    private suspend fun attemptOverpass(
         endpoint: String,
         encodedQuery: String,
         centerLat: Double,
@@ -549,7 +549,7 @@ class PeakFinder @Inject constructor(
         // Recombine, dropping any candidate whose altitude is still
         // unknown (neither `ele` nor DEM produced a value).
         var demIdx = 0
-        return candidates.mapNotNull { c ->
+        return OverpassAttempt.Peaks(candidates.mapNotNull { c ->
             val altitude = c.knownAltitude
                 ?: resolvedAltitudes.getOrNull(demIdx++)
                 ?: return@mapNotNull null
@@ -561,7 +561,7 @@ class PeakFinder @Inject constructor(
                 distance = c.distance,
                 bearing = c.bearing
             )
-        }
+        })
     }
 
     private fun findKnownMountains(location: Location, data: MountainData?): List<NearbyPeak> {
