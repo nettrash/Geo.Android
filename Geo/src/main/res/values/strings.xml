@@ -321,6 +321,7 @@
     <string name="offline_download_here">Download here</string>
     <string name="offline_name_area">Name this area</string>
     <string name="offline_rename_title">Rename area</string>
+    <string name="offline_download_failed">Couldn\'t download peaks — no peak server answered. Try again later.</string>
 
     <!-- Permission banner (location / motion) -->
     <string name="permissions_banner_headline_both">Location &amp; motion access required</string>

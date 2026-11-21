@@ -588,6 +588,11 @@ class GeoViewModel @Inject constructor(
     val offlinePackDownloading: StateFlow<Boolean> = offlinePackRepository.isDownloading
     val offlinePackStatus: StateFlow<String> = offlinePackRepository.statusText
     val offlinePackUpdatingId: StateFlow<String?> = offlinePackRepository.updatingPackId
+    /** Why the last pack download or update saved nothing (no peak server
+     *  answered), or null. */
+    val offlinePackError: StateFlow<String?> = offlinePackRepository.downloadError
+
+    fun dismissOfflinePackError() = offlinePackRepository.clearDownloadError()
 
     /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
     fun downloadOfflinePack(name: String, radiusKm: Double) {

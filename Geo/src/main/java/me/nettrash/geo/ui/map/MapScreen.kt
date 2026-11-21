@@ -50,6 +50,7 @@ import com.google.maps.android.compose.rememberCameraPositionState
 import me.nettrash.geo.data.model.MountainInfo
 import me.nettrash.geo.ui.GeoViewModel
 import me.nettrash.geo.ui.components.AssetImage
+import me.nettrash.geo.ui.info.OfflinePackErrorNote
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import java.text.SimpleDateFormat
@@ -82,6 +83,7 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
     val offlinePacks by viewModel.offlinePacks.collectAsState()
     val offlineDownloading by viewModel.offlinePackDownloading.collectAsState()
     val offlineStatus by viewModel.offlinePackStatus.collectAsState()
+    val offlineError by viewModel.offlinePackError.collectAsState()
     var chooseAreaMode by remember { mutableStateOf(false) }
     var downloadRadiusKm by remember { mutableStateOf(10.0) }
     var selectedPack by remember { mutableStateOf<OfflinePack?>(null) }
@@ -262,7 +264,8 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
         }
 
         // Bottom control bar: "Download a region" → radius chips + Download here,
-        // with live progress while a download runs.
+        // with live progress while a download runs — and, above it, why the last
+        // download or update saved nothing.
         Surface(
             color = Color(0xFF222222),
             shape = RoundedCornerShape(12.dp),
@@ -272,6 +275,10 @@ fun MapScreen(modifier: Modifier = Modifier, viewModel: GeoViewModel) {
                 .padding(12.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
+                offlineError?.let { message ->
+                    OfflinePackErrorNote(message, onDismiss = { viewModel.dismissOfflinePackError() })
+                    Spacer(Modifier.height(6.dp))
+                }
                 when {
                     !chooseAreaMode -> {
                         Button(

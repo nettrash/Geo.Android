@@ -81,8 +81,10 @@ class PeakFinder @Inject constructor(
 
     /// "The server answered and there are no peaks here" vs "we never got an
     /// answer". Collapsing those two is what turned a loaded Overpass mirror
-    /// into a silently empty Nature tab that then refused to retry.
-    private sealed class PeakOutcome {
+    /// into a silently empty Nature tab that then refused to retry. Public
+    /// because the offline-pack download ([fetchPeaksForArea]) must tell them
+    /// apart too: a pack saved from a failure reads as "no peaks in this area".
+    sealed class PeakOutcome {
         data class Success(val peaks: List<NearbyPeak>) : PeakOutcome()
         data class Failure(val reason: String) : PeakOutcome()
     }
@@ -495,25 +497,15 @@ class PeakFinder @Inject constructor(
      */
     /** Fetch OSM `natural=peak` nodes for an arbitrary area. Reused by the
      *  offline-pack prefetch with a much larger radius than the live 5 km
-     *  search; runs on `Dispatchers.IO`. */
+     *  search; runs on `Dispatchers.IO`. Returns the [PeakOutcome] itself, not
+     *  a bare list: [PeakOutcome.Failure] means no mirror answered, and a pack
+     *  saved from it would read as "this area has no peaks" (an empty list
+     *  used to stand for both). */
     suspend fun fetchPeaksForArea(
         centerLat: Double,
         centerLon: Double,
         radiusMeters: Double
-    ): List<NearbyPeak> = withContext(Dispatchers.IO) {
-        searchOpenStreetMapArea(centerLat, centerLon, radiusMeters)
-    }
-
-    private suspend fun searchOpenStreetMapArea(
-        centerLat: Double,
-        centerLon: Double,
-        radiusMeters: Double
-    ): List<NearbyPeak> = when (val outcome = fetchPeakOutcome(centerLat, centerLon, radiusMeters)) {
-        is PeakOutcome.Success -> outcome.peaks
-        // The offline-pack prefetch already ignores an empty fetch and rebuilds
-        // the pack later, so it does not need the failure reason.
-        is PeakOutcome.Failure -> emptyList()
-    }
+    ): PeakOutcome = fetchPeakOutcome(centerLat, centerLon, radiusMeters)
 
     /**
      * Ask the mirrors in turn until one answers, from a rotating start and
