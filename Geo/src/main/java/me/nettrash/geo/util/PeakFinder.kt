@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.floor
 
 /**
  * Discovers nearby peaks by merging:
@@ -184,6 +185,10 @@ class PeakFinder @Inject constructor(
      *  small regardless. Mirrors iOS. */
     private val maxRetainedPeaks = 300
 
+    /** Latitude band of [DuplicateIndex]: 0.002° is ~222 m everywhere, more
+     *  than the 200 m of the duplicate rule ([isDuplicate]). */
+    private val duplicateBandDegrees = 0.002
+
     private var lastSearchLocation: Location? = null
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -335,16 +340,25 @@ class PeakFinder @Inject constructor(
         // have (live peaks or the last ones handed out, or the snapshot
         // restored from disk) BEFORE the network is awaited, and are published
         // at once. Same 200 m de-duplication as the confirmed merge below (a
-        // peak already shown wins), and pack peaks are stamped fresh, as they
-        // are below.
+        // peak already shown wins), checked through a [DuplicateIndex] because
+        // this runs on every network search, and pack peaks are stamped fresh,
+        // as they are below.
         val (knownPeaks, localPeaks) = withContext(Dispatchers.IO) {
             val known = findKnownMountains(location, mountainsData, now)
             val working = previousPeaks.toMutableList()
+            val merged = DuplicateIndex(working)
             for (peak in known) {
-                if (!isDuplicate(peak, working)) working.add(peak)
+                if (!merged.isDuplicate(peak)) {
+                    working.add(peak)
+                    merged.add(peak)
+                }
             }
             for (peak in offlinePeaks) {
-                if (!isDuplicate(peak, working)) working.add(peak.copy(lastSeenAt = now))
+                if (!merged.isDuplicate(peak)) {
+                    val stamped = peak.copy(lastSeenAt = now)
+                    working.add(stamped)
+                    merged.add(stamped)
+                }
             }
             known to refreshGeometry(working, location, obsAlt)
         }
@@ -494,6 +508,43 @@ class PeakFinder @Inject constructor(
                 other.latitude, other.longitude
             ) < 200
         }
+    }
+
+    /**
+     * [isDuplicate] for a set that grows one peak at a time, without scanning
+     * the whole set for every peak. The local merge in [executeSearch] checks
+     * every pack peak (4000 a pack, more with several) on every network search,
+     * the retries of an outage included, and the whole-set scan made that
+     * quadratic: about 3 s per search with three full packs on a desktop JVM.
+     *
+     * Peaks are kept in latitude bands of [duplicateBandDegrees]. A
+     * great-circle distance is never shorter than its north–south part, so two
+     * peaks less than 200 m apart are less than 0.0018° of latitude apart, and
+     * only a peak's own band and the two beside it can hold its duplicate.
+     * Those get the exact [isDuplicate] test, so the answer is the same as the
+     * whole-set scan's.
+     */
+    private inner class DuplicateIndex(peaks: List<NearbyPeak>) {
+        private val bands = HashMap<Long, MutableList<NearbyPeak>>()
+
+        init {
+            peaks.forEach(::add)
+        }
+
+        fun add(peak: NearbyPeak) {
+            bands.getOrPut(bandOf(peak.latitude)) { mutableListOf() }.add(peak)
+        }
+
+        fun isDuplicate(peak: NearbyPeak): Boolean {
+            val band = bandOf(peak.latitude)
+            for (neighbour in band - 1..band + 1) {
+                val inBand = bands[neighbour] ?: continue
+                if (this@PeakFinder.isDuplicate(peak, inBand)) return true
+            }
+            return false
+        }
+
+        private fun bandOf(latitude: Double): Long = floor(latitude / duplicateBandDegrees).toLong()
     }
 
     /**

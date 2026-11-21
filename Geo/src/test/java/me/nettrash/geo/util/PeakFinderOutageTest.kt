@@ -26,6 +26,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.io.File
+import java.util.Random
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -159,6 +160,48 @@ class PeakFinderOutageTest {
         assertThat(networkStillPending).isTrue()
         assertThat(names(published!!)).containsExactly("Pack Peak", "Bundled Peak")
         assertThat(names(afterFailure)).containsExactly("Pack Peak", "Bundled Peak")
+    }
+
+    // ── The local merge's duplicate check ───────────────────────────
+
+    /** The local merge checks every pack peak (up to 4000 a pack, on every
+     *  network search) against everything merged before it through a
+     *  latitude-band index, not a scan of the whole set. It must keep exactly
+     *  what the 200 m rule, applied pair by pair, keeps: here a pack dense with
+     *  near duplicates that straddles the equator, where band numbers change
+     *  sign, after a second pack 111 km east that shares its bands. */
+    @Test
+    fun theLocalMergeKeepsExactlyWhatThe200mRuleKeeps() = runBlocking<Unit> {
+        val random = Random(26)
+        val origin = location(-0.0005, 37.0)
+        fun scatter(prefix: String, count: Int, lon: Double) = List(count) { i ->
+            NearbyPeak.create(
+                "$prefix $i",
+                origin.latitude + (random.nextDouble() - 0.5) * 0.03,
+                lon + (random.nextDouble() - 0.5) * 0.03,
+                3000.0, 0.0, 0.0
+            )
+        }
+        val current = scatter("Current", 20, origin.longitude)
+        val pack = scatter("Far", 300, origin.longitude + 1.0) + scatter("Near", 1500, origin.longitude)
+
+        val result = finder(OverpassStub { null }).search(at = origin, current = current, offline = pack)
+
+        fun metresFrom(lat: Double, lon: Double, peak: NearbyPeak) =
+            GeoCalculations.distanceBetween(lat, lon, peak.latitude, peak.longitude)
+        val kept = current.toMutableList()
+        for (peak in pack) {
+            if (kept.none { metresFrom(it.latitude, it.longitude, peak) < 200 }) kept += peak
+        }
+        val expected = kept
+            .filter { metresFrom(origin.latitude, origin.longitude, it) <= 80_000 }
+            .sortedBy { metresFrom(origin.latitude, origin.longitude, it) }
+            .map { it.name }
+        // Dense enough that most of the pack is dropped, and under the 300 cap,
+        // so every peak the rule keeps is compared.
+        assertThat(expected.size).isAtLeast(100)
+        assertThat(expected.size).isLessThan(300)
+        assertThat(names(result)).containsExactlyElementsIn(expected).inOrder()
     }
 
     // ── No TTL expiry during an outage ──────────────────────────────
