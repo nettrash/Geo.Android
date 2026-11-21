@@ -410,9 +410,10 @@ class PeakFinderOutageTest {
     }
 
     /** Every mirror overloaded is a failed search — the peaks on screen stay,
-     *  marked stale — never a confirmed "none" that clears them, is reused for
-     *  15 min and overwrites the snapshot. The reason is the remark itself,
-     *  trimmed to 120 characters, and the match ignores case. */
+     *  marked stale — never a confirmed "none", which cleared the label and the
+     *  error, was reused for 15 min with no retry (so the peaks it never
+     *  re-confirmed aged out) and rewrote the snapshot. The reason is the remark
+     *  itself, trimmed to 120 characters, and the match ignores case. */
     @Test
     fun runtimeErrorsOnEveryMirrorAreAFailureNotNoPeaks() = runBlocking<Unit> {
         val remark = "Runtime error: Query timed out in \"query\" at line 2 after 10 seconds. " + "x".repeat(200)

@@ -664,9 +664,11 @@ class PeakFinder @Inject constructor(
         // comes back HTTP 200, with empty `elements` and the reason in `remark`
         // ("runtime error: Query timed out in "query" at line 2 after 10
         // seconds."). That is the server failing to answer, not "no peaks
-        // here" — taken as an answer it was reused for 15 min, cleared the
-        // peaks on screen and overwrote the snapshot. Any other remark, or
-        // none, is an answer as before.
+        // here" — taken as an answer it cleared the stale label and the error,
+        // was reused for 15 min with no retry (so the peaks it never
+        // re-confirmed aged out by the TTL), rewrote the snapshot and saved a
+        // pack download with no peaks. Any other remark, or none, is an answer
+        // as before.
         val remark = decoded.remark
         if (remark != null && remark.contains("runtime error", ignoreCase = true)) {
             AppLog.ar.warn("Overpass $host answered with a runtime error: $remark")
