@@ -2,8 +2,10 @@ package me.nettrash.geo.util
 
 import android.content.Context
 import android.location.Location
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -48,9 +50,10 @@ import javax.inject.Singleton
  *      until they fall outside `searchRadius × 2`; this stops the AR
  *      overlay from flickering when Overpass returns nothing for a
  *      tick.
- *   2. **TTL eviction**: peaks not re-confirmed in [peakTTL] ms drop
+ *   2. **TTL eviction**: peaks not re-confirmed in [peakTtlMs] ms drop
  *      out so the list doesn't grow forever when the user sits still
- *      for hours.
+ *      for hours — but only when a confirmed answer arrives, so an
+ *      outage never ages the horizon away.
  */
 @Singleton
 class PeakFinder @Inject constructor(
@@ -65,6 +68,10 @@ class PeakFinder @Inject constructor(
      * the reason the network let us down. The Nature view says "possibly
      * outdated" instead of letting an old horizon look like a live one, and
      * never shows a bare `0` that could be read either way.
+     *
+     * Both describe the last real outcome, which [PeakFinder] keeps: a reuse or
+     * in-flight result confirms nothing, so it reports them unchanged instead
+     * of resetting them on every refresh tick.
      */
     data class PeakSearchResult(
         val peaks: List<NearbyPeak>,
@@ -131,8 +138,19 @@ class PeakFinder @Inject constructor(
     private val endpointTimeoutSeconds = 8
     private val fetchDeadlineMs = 30_000L
 
-    private var lastSuccessAtMs: Long? = null
-    private var lastFailureAtMs: Long? = null
+    /// When the last outcome ARRIVED. `@Volatile`, like the outcome state below:
+    /// written where a search's outcome lands, read by the next search, which
+    /// may run on another thread.
+    @Volatile private var lastSuccessAtMs: Long? = null
+    @Volatile private var lastFailureAtMs: Long? = null
+
+    /// What the last outcome said — the flag behind [PeakSearchResult.stale] and
+    /// the reason behind [PeakSearchResult.error]. Kept here rather than only on
+    /// each result because the reuse and in-flight paths confirm nothing and
+    /// must hand back what the last search found; they used to clear both on
+    /// the very next refresh tick.
+    @Volatile private var peaksAreStale = false
+    @Volatile private var lastSearchError: String? = null
 
     /// Guards against overlapping searches: the AR tab asks every few seconds
     /// while a failover search can take tens of seconds, and concurrent
@@ -156,7 +174,17 @@ class PeakFinder @Inject constructor(
 
     private var lastSearchLocation: Location? = null
     private val json = Json { ignoreUnknownKeys = true }
-    private val client = OkHttpClient.Builder()
+
+    /** Time source for every freshness, TTL, backoff and deadline decision, and
+     *  for the `lastSeenAt` of every peak this class creates (the TTL compares
+     *  the two). A seam, so a test can stand in for the hours an outage lasts. */
+    @VisibleForTesting
+    internal var clock: () -> Long = System::currentTimeMillis
+
+    /** The Overpass client. A seam, so a test can answer per mirror with no
+     *  network at all. */
+    @VisibleForTesting
+    internal var client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(endpointTimeoutSeconds.toLong(), TimeUnit.SECONDS)
         .readTimeout(endpointTimeoutSeconds.toLong(), TimeUnit.SECONDS)
         .addInterceptor(RetryInterceptor(minIntervalMs = 1000))
@@ -166,13 +194,21 @@ class PeakFinder @Inject constructor(
      * Search for peaks near [location] and merge with [currentPeaks].
      * Safe to call from a Compose coroutine — the network work runs
      * on `Dispatchers.IO`.
+     *
+     * When the search goes to the network, [onLocalPeaks] is called once, on
+     * the caller's context and before the network is awaited, with what needs
+     * no network: [currentPeaks] (or the snapshot restored from disk) merged
+     * with the bundled mountains and [offlinePeaks]. A failover across every
+     * mirror can take ~25 s, and those peaks must not wait for it — nor vanish
+     * when it fails.
      */
     suspend fun searchPeaks(
         location: Location,
         mountainsData: MountainData?,
         currentPeaks: List<NearbyPeak>,
         offlinePeaks: List<NearbyPeak> = emptyList(),
-        observerAltitude: Double? = null
+        observerAltitude: Double? = null,
+        onLocalPeaks: (PeakSearchResult) -> Unit = {}
     ): PeakSearchResult {
         // Observer altitude for the horizon-visibility cut. Prefer the caller's
         // (barometer-preferred) value — GPS altitude can be tens of metres off,
@@ -189,11 +225,14 @@ class PeakFinder @Inject constructor(
                 val restored = readSnapshot(location)
                 if (restored != null) {
                     workingPeaks = restored
+                    // Not a confirmed answer, so "possibly outdated" — unless a
+                    // downloaded pack covers here (see [packCoversHere]).
+                    peaksAreStale = restored.isNotEmpty() && !packCoversHere(location, offlinePeaks)
                 }
             }
         }
 
-        val now = System.currentTimeMillis()
+        val now = clock()
         val last = lastSearchLocation
         // Reuse the previous result while it is still trustworthy: no movement
         // AND an answer young enough to keep. Deliberately no
@@ -206,18 +245,18 @@ class PeakFinder @Inject constructor(
         ) {
             // No movement AND a result young enough to trust — just refresh
             // distance/bearing of the existing set against the latest location
-            // so visual fade-by-distance stays accurate.
-            return PeakSearchResult(refreshGeometry(workingPeaks, location, obsAlt))
+            // so visual fade-by-distance stays accurate. This confirms nothing,
+            // so the stale flag and the error stay as the last outcome left them.
+            return resultOf(refreshGeometry(workingPeaks, location, obsAlt))
         }
 
         if (!searching.compareAndSet(false, true)) {
             // A failover search can outlive the view's refresh tick; fold the
             // duplicate request into the one in flight rather than stack
-            // requests onto an already-loaded endpoint.
-            return PeakSearchResult(
-                peaks = refreshGeometry(workingPeaks, location, obsAlt),
-                stale = lastSuccessAtMs == null
-            )
+            // requests onto an already-loaded endpoint. Nothing is confirmed
+            // here either, so it reports the current flag and error — not
+            // "never succeeded", which blinked the label off during each retry.
+            return resultOf(refreshGeometry(workingPeaks, location, obsAlt))
         }
         // Stamped BEFORE the request, so a tick landing inside the retry backoff
         // takes the reuse path above instead of firing another request at a
@@ -225,60 +264,105 @@ class PeakFinder @Inject constructor(
         // for a confirmed answer.
         lastSearchLocation = location
         try {
-            return executeSearch(location, mountainsData, workingPeaks, offlinePeaks, obsAlt)
+            return executeSearch(location, mountainsData, workingPeaks, offlinePeaks, obsAlt, onLocalPeaks)
         } finally {
             searching.set(false)
         }
     }
 
+    /** [peaks] with the stale flag and the error as the last outcome left them. */
+    private fun resultOf(peaks: List<NearbyPeak>) =
+        PeakSearchResult(peaks, stale = peaksAreStale, error = lastSearchError)
+
+    /**
+     * Whether a downloaded offline pack covers here: any of its peaks within
+     * the render distance. A pack is the explicit offline answer, so its area
+     * is never labelled "possibly outdated" — calling it that on a summit with
+     * no signal, the very case packs exist for, would be wrong.
+     */
+    private fun packCoversHere(location: Location, offlinePeaks: List<NearbyPeak>): Boolean =
+        offlinePeaks.any { peak ->
+            val pl = Location("").apply {
+                latitude = peak.latitude
+                longitude = peak.longitude
+            }
+            location.distanceTo(pl) <= maxPeakRenderDistanceM
+        }
+
     /**
      * The network half of [searchPeaks], run once (guarded by [searching]).
-     * Stamps the cache — and writes the on-disk snapshot — only from
-     * [PeakOutcome.Success]; a failure keeps the previous peaks and marks them
-     * stale so an outage can never be mistaken for "no peaks here".
+     * The local sources are merged and handed to [onLocalPeaks] first. Only
+     * [PeakOutcome.Success] then stamps the cache, clears the stale flag and
+     * writes the on-disk snapshot; a failure keeps that local merge and marks
+     * it stale, so an outage can never be mistaken for "no peaks here" — nor
+     * hide the peaks the phone already has.
      */
     private suspend fun executeSearch(
         location: Location,
         mountainsData: MountainData?,
         previousPeaks: List<NearbyPeak>,
         offlinePeaks: List<NearbyPeak>,
-        obsAlt: Double
-    ): PeakSearchResult {
-        val now = System.currentTimeMillis()
-        return withContext(Dispatchers.IO) {
-            val osmDeferred = async {
-                fetchPeakOutcome(location.latitude, location.longitude, searchRadius)
+        obsAlt: Double,
+        onLocalPeaks: (PeakSearchResult) -> Unit
+    ): PeakSearchResult = coroutineScope {
+        val now = clock()
+        val osmDeferred = async {
+            fetchPeakOutcome(location.latitude, location.longitude, searchRadius)
+        }
+
+        // The local sources need no network, so they join what we already
+        // have (live peaks, or the snapshot restored from disk) BEFORE the
+        // network is awaited, and are published at once. Same 200 m
+        // de-duplication as the confirmed merge below (a peak already shown
+        // wins), and pack peaks are stamped fresh, as they are below.
+        val (knownPeaks, localPeaks) = withContext(Dispatchers.IO) {
+            val known = findKnownMountains(location, mountainsData, now)
+            val working = previousPeaks.toMutableList()
+            for (peak in known) {
+                if (!isDuplicate(peak, working)) working.add(peak)
             }
-            val knownPeaks = findKnownMountains(location, mountainsData)
-
-            val freshPeaks = mutableListOf<NearbyPeak>()
-
-            when (val outcome = osmDeferred.await()) {
-                is PeakOutcome.Failure -> {
-                    // A failed search is NOT a result. Keep showing what we
-                    // already have (live peaks, or the snapshot restored from
-                    // disk), age their geometry against the current fix, and
-                    // mark them stale. This used to merge an empty OSM set in
-                    // and stamp `lastSearchLocation`, so `peakTtlMs` then
-                    // dropped everything the failure could not re-confirm —
-                    // downloaded offline-pack peaks included — and nothing
-                    // retried until the user walked 500 m.
-                    lastFailureAtMs = now
-                    AppLog.ar.error("Nearby peaks: search failed (${outcome.reason})")
-                    return@withContext PeakSearchResult(
-                        peaks = refreshGeometry(previousPeaks, location, obsAlt),
-                        stale = true,
-                        error = outcome.reason
-                    )
-                }
-                is PeakOutcome.Success -> freshPeaks.addAll(outcome.peaks)
+            for (peak in offlinePeaks) {
+                if (!isDuplicate(peak, working)) working.add(peak.copy(lastSeenAt = now))
             }
+            known to refreshGeometry(working, location, obsAlt)
+        }
+        onLocalPeaks(resultOf(localPeaks))
 
-            // Only a confirmed answer counts as fresh. (The search *location* was
-            // stamped before the request, to pace retries; the *result* only ages
-            // from a success, so a failure never becomes the thing we serve.)
-            lastSuccessAtMs = now
-            lastFailureAtMs = null
+        val outcome = osmDeferred.await()
+        // Stamp when the outcome ARRIVED, not when the search began: a failover
+        // can take ~30 s, and stamped up front that shrank the 60 s retry
+        // backoff to ~30 s.
+        val answeredAt = clock()
+
+        val osmPeaks = when (outcome) {
+            is PeakOutcome.Failure -> {
+                // A failed search is NOT a result. Keep showing what we have —
+                // the local merge above, so offline-pack and bundled peaks
+                // included — and mark it stale. This used to merge an empty OSM
+                // set in and stamp `lastSearchLocation`, so `peakTtlMs` then
+                // dropped everything the failure could not re-confirm, and
+                // nothing retried until the user walked 500 m; then it returned
+                // before the local sources were merged at all, so a downloaded
+                // pack showed 0 peaks with no signal.
+                lastFailureAtMs = answeredAt
+                lastSearchError = outcome.reason
+                peaksAreStale = localPeaks.isNotEmpty() && !packCoversHere(location, offlinePeaks)
+                AppLog.ar.error("Nearby peaks: search failed (${outcome.reason})")
+                return@coroutineScope resultOf(localPeaks)
+            }
+            is PeakOutcome.Success -> outcome.peaks
+        }
+
+        // Only a confirmed answer counts as fresh. (The search *location* was
+        // stamped before the request, to pace retries; the *result* only ages
+        // from a success, so a failure never becomes the thing we serve.)
+        lastSuccessAtMs = answeredAt
+        lastFailureAtMs = null
+        lastSearchError = null
+        peaksAreStale = false
+
+        withContext(Dispatchers.IO) {
+            val freshPeaks = osmPeaks.toMutableList()
 
             // Peaks neither OSM nor the DEM can give an altitude for are
             // dropped inside [fetchPeakOutcome] — no placeholder heights.
@@ -294,7 +378,7 @@ class PeakFinder @Inject constructor(
             // the drop-radius filter still removes any too far to see.
             for (peak in offlinePeaks) {
                 if (!isDuplicate(peak, freshPeaks)) {
-                    freshPeaks.add(peak.copy(lastSeenAt = now))
+                    freshPeaks.add(peak.copy(lastSeenAt = answeredAt))
                 }
             }
 
@@ -307,9 +391,11 @@ class PeakFinder @Inject constructor(
 
             // Keep peaks out to the render distance (not just the 5 km search
             // radius) so downloaded offline packs show distant horizon summits,
-            // then age out anything not re-confirmed within the TTL, and drop
-            // peaks hidden below the Earth's bulge (only keep what's really
-            // visible from here).
+            // then age out anything not re-confirmed within the TTL — here
+            // only, right after a confirmed answer; every other path keeps what
+            // it has, so an outage never ages the horizon away — and drop peaks
+            // hidden below the Earth's bulge (only keep what's really visible
+            // from here).
             val dropRadius = maxPeakRenderDistanceM
             val merged = byId.values
                 .filter { peak ->
@@ -318,7 +404,7 @@ class PeakFinder @Inject constructor(
                         longitude = peak.longitude
                     }
                     val d = location.distanceTo(pl).toDouble()
-                    d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs &&
+                    d <= dropRadius && (answeredAt - peak.lastSeenAt) <= peakTtlMs &&
                         GeoCalculations.isAboveHorizon(obsAlt, peak.altitude, d)
                 }
                 .map { peak ->
@@ -347,10 +433,13 @@ class PeakFinder @Inject constructor(
         location: Location,
         obsAlt: Double
     ): List<NearbyPeak> {
-        // Apply the same TTL + drop-radius + horizon-visibility eviction the
-        // full-search branch does, so a stationary user (who only ever takes this
-        // path) still ages out peaks that have drifted out of view.
-        val now = System.currentTimeMillis()
+        // Apply the same drop-radius + horizon-visibility eviction and
+        // nearest-first cap the confirmed merge does, so a stationary user (who
+        // only ever takes the reuse path) still drops peaks that have drifted
+        // out of view. NOT the TTL: every caller here — reuse, in flight, the
+        // local merge, a failed search, a restored snapshot — confirms nothing,
+        // and aging peaks out on these paths emptied the horizon an hour into
+        // an outage. The TTL cuts only right after a confirmed answer.
         val dropRadius = maxPeakRenderDistanceM
         return peaks
             .filter { peak ->
@@ -359,8 +448,7 @@ class PeakFinder @Inject constructor(
                     longitude = peak.longitude
                 }
                 val d = location.distanceTo(pl).toDouble()
-                d <= dropRadius && (now - peak.lastSeenAt) <= peakTtlMs &&
-                    GeoCalculations.isAboveHorizon(obsAlt, peak.altitude, d)
+                d <= dropRadius && GeoCalculations.isAboveHorizon(obsAlt, peak.altitude, d)
             }
             .map { peak ->
                 val d = GeoCalculations.distanceBetween(
@@ -373,6 +461,8 @@ class PeakFinder @Inject constructor(
                 )
                 peak.copy(distance = d, bearing = b)
             }
+            .sortedBy { it.distance }
+            .take(maxRetainedPeaks)
     }
 
     private fun isDuplicate(peak: NearbyPeak, existing: List<NearbyPeak>): Boolean {
@@ -457,10 +547,10 @@ class PeakFinder @Inject constructor(
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
 
         val reasons = mutableListOf<String>()
-        val deadline = System.currentTimeMillis() + fetchDeadlineMs
+        val deadline = clock() + fetchDeadlineMs
         for (endpoint in rotatedEndpoints(endpointCursor.getAndIncrement())) {
             val host = endpoint.substringAfter("://").substringBefore('/')
-            if (System.currentTimeMillis() >= deadline) {
+            if (clock() >= deadline) {
                 reasons += "$host: skipped (search deadline)"
                 break
             }
@@ -549,6 +639,7 @@ class PeakFinder @Inject constructor(
         // Recombine, dropping any candidate whose altitude is still
         // unknown (neither `ele` nor DEM produced a value).
         var demIdx = 0
+        val seenAt = clock()
         return OverpassAttempt.Peaks(candidates.mapNotNull { c ->
             val altitude = c.knownAltitude
                 ?: resolvedAltitudes.getOrNull(demIdx++)
@@ -559,12 +650,13 @@ class PeakFinder @Inject constructor(
                 longitude = c.lon,
                 altitude = altitude,
                 distance = c.distance,
-                bearing = c.bearing
+                bearing = c.bearing,
+                lastSeenAt = seenAt
             )
         })
     }
 
-    private fun findKnownMountains(location: Location, data: MountainData?): List<NearbyPeak> {
+    private fun findKnownMountains(location: Location, data: MountainData?, now: Long): List<NearbyPeak> {
         if (data == null) return emptyList()
 
         val results = mutableListOf<NearbyPeak>()
@@ -583,8 +675,9 @@ class PeakFinder @Inject constructor(
                 // These summits are bundled, so they cost no network at all —
                 // and they're exactly the ones you look at from far away. At
                 // 5 km a curated peak only appeared when you were already
-                // standing on it, which is where you cannot see it. The merge
-                // in searchPeaks still applies the horizon and TTL cuts.
+                // standing on it, which is where you cannot see it. The merges
+                // in executeSearch still apply the horizon cut (and, after a
+                // confirmed answer, the TTL).
                 if (distance > maxPeakRenderDistanceM) continue
 
                 val bearing = GeoCalculations.bearing(
@@ -598,7 +691,8 @@ class PeakFinder @Inject constructor(
                         longitude = lon,
                         altitude = mountain.height?.toDouble() ?: 0.0,
                         distance = distance,
-                        bearing = bearing
+                        bearing = bearing,
+                        lastSeenAt = now
                     )
                 )
             }
@@ -611,10 +705,14 @@ class PeakFinder @Inject constructor(
     // Three pieces make "the network failed" stop looking like "there are no
     // peaks here": the pure reuse decision the no-move path consults (see
     // companion), a snapshot written on success only, and that snapshot
-    // restored — marked stale — on the next start.
+    // restored — marked stale unless a pack covers here — on the next start.
 
     /** On-disk form of the last successful search. `distance` / `bearing` are
-     *  derived against the live fix, so only identity and altitude are stored. */
+     *  derived against the live fix, so only identity and altitude are stored.
+     *  The centre is rounded to 2 decimal places (~1 km): it only answers "is
+     *  this snapshot for here?" against [persistedReuseDistanceM], and the
+     *  exact fix would keep more of where the user was than that check needs.
+     *  The peak entries keep their exact coordinates. */
     @Serializable
     private data class PeakSnapshot(
         val centerLat: Double,
@@ -631,27 +729,32 @@ class PeakFinder @Inject constructor(
         )
     }
 
-    private fun snapshotFile(): File = File(context.filesDir, "nearby_peaks_cache.json")
+    /** In the cache dir, not the files dir: this is derived, re-downloadable
+     *  data — and Auto Backup excludes the cache dir, so the rounded point a
+     *  search was made from never leaves the device in a backup. */
+    private fun snapshotFile(): File = File(context.cacheDir, "nearby_peaks_cache.json")
 
     /**
      * Restore the persisted snapshot if it is recent enough and near enough to
      * be about *here*. `lastSeenAt` is re-stamped on load — those peaks were not
      * "failing to be re-confirmed", they were on disk — and the `stale` flag on
-     * the result is what tells the user they may be out of date.
+     * the result is what tells the user they may be out of date. `distance` /
+     * `bearing` are placeholders: every path recomputes them against the live
+     * fix ([refreshGeometry]) before anything is shown.
      */
     private fun readSnapshot(location: Location): List<NearbyPeak>? {
         return try {
             val file = snapshotFile()
             if (!file.exists()) return null
             val snapshot = json.decodeFromString<PeakSnapshot>(file.readText())
-            val ageMs = System.currentTimeMillis() - snapshot.savedAtMs
+            val ageMs = clock() - snapshot.savedAtMs
             if (ageMs > persistedMaxAgeMs) return null
             val cachedCenter = Location("").apply {
                 latitude = snapshot.centerLat
                 longitude = snapshot.centerLon
             }
             if (location.distanceTo(cachedCenter) > persistedReuseDistanceM) return null
-            val now = System.currentTimeMillis()
+            val now = clock()
             snapshot.entries.map {
                 NearbyPeak.create(
                     name = it.name,
@@ -675,9 +778,10 @@ class PeakFinder @Inject constructor(
     private fun writeSnapshot(peaks: List<NearbyPeak>, center: Location) {
         try {
             val snapshot = PeakSnapshot(
-                centerLat = center.latitude,
-                centerLon = center.longitude,
-                savedAtMs = System.currentTimeMillis(),
+                // ~1 km (2 decimal places) — see [PeakSnapshot].
+                centerLat = Math.round(center.latitude * 100.0) / 100.0,
+                centerLon = Math.round(center.longitude * 100.0) / 100.0,
+                savedAtMs = clock(),
                 entries = peaks.map {
                     PeakSnapshot.Entry(
                         name = it.name,
