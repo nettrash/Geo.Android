@@ -287,7 +287,7 @@
         <item quantity="other">(%1$d hidden)</item>
     </plurals>
     <plurals name="nature_peaks_floor_hides_all">
-        <item quantity="one">%1$d m floor hides all %2$d peak</item>
+        <item quantity="one">%1$d m floor hides %2$d peak</item>
         <item quantity="other">%1$d m floor hides all %2$d peaks</item>
     </plurals>
     <string name="ar_about_undetermined">The Nature view shows nearby mountain peaks overlaid on the camera. Continue to choose whether to grant camera access.</string>

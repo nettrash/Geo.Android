@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -619,7 +620,7 @@ private fun ArScene(
                         .background(Color.Black.copy(alpha = 0.55f))
                         .clickable {
                             minPeakAltitude = 0f
-                            naturePrefs.edit().putFloat(KEY_MIN_PEAK_ALT, 0f).apply()
+                            naturePrefs.edit { putFloat(KEY_MIN_PEAK_ALT, 0f) }
                         }
                         .padding(horizontal = 10.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
