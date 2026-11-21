@@ -194,6 +194,65 @@ class PeakFinderOutageTest {
         assertThat(recovered.stale).isFalse()
     }
 
+    // ── A caller that has lost its peaks ────────────────────────────
+
+    /** GeoViewModel lives as long as the activity, this singleton as long as
+     *  the process: after Back finishes the activity (Android 9–11) a cached
+     *  process hands the next GeoViewModel an empty set while the reuse state
+     *  here still says "nothing to ask". It got that empty set back — no peaks,
+     *  no label — on every tick for up to 15 min after a confirmed answer. It
+     *  gets the peaks it lost, still without a request. */
+    @Test
+    fun aNewViewModelGetsTheConfirmedPeaksBack() = runBlocking<Unit> {
+        val stub = OverpassStub { OverpassStub.body(listOf(osmPeak)) }
+        val finder = finder(stub)
+        assertThat(names(finder.search())).containsExactly("OSM Peak")
+
+        val newViewModel = finder.search(current = emptyList())
+        assertThat(stub.hosts).hasSize(1)    // the reuse path: nothing was asked
+        assertThat(names(newViewModel)).containsExactly("OSM Peak")
+        assertThat(newViewModel.stale).isFalse()
+    }
+
+    /** ...and with no signal, the peaks of a downloaded pack, which stayed
+     *  hidden for the whole 60 s retry backoff — with the reason the last
+     *  search failed. */
+    @Test
+    fun aNewViewModelGetsThePackPeaksBackDuringTheBackoff() = runBlocking<Unit> {
+        val stub = OverpassStub { null }
+        val finder = finder(stub)
+        val failed = finder.search(current = listOf(keptPeak), offline = listOf(packPeak), mountains = bundled)
+        assertThat(names(failed)).containsExactly("Kept", "Pack Peak", "Bundled Peak")
+        val asked = stub.hosts.size
+
+        val newViewModel = finder.search(current = emptyList(), offline = listOf(packPeak), mountains = bundled)
+        assertThat(stub.hosts).hasSize(asked)    // still inside the backoff
+        assertThat(names(newViewModel)).containsExactly("Kept", "Pack Peak", "Bundled Peak")
+        assertThat(newViewModel.error).isEqualTo(failed.error)
+    }
+
+    /** ...and a tick that lands while a search is still failing over (the old
+     *  GeoViewModel's, running out its blocking request) gets what that search
+     *  already published. */
+    @Test
+    fun aNewViewModelGetsThePeaksOfASearchInFlight() = runBlocking<Unit> {
+        val release = CountDownLatch(1)
+        val finder = finder(OverpassStub { release.await(10, TimeUnit.SECONDS); null })
+        val early = CompletableDeferred<PeakFinder.PeakSearchResult>()
+        val search = async(Dispatchers.IO) {
+            finder.search(offline = listOf(packPeak), mountains = bundled, onLocal = { early.complete(it) })
+        }
+        val published = withTimeoutOrNull(5_000) { early.await() }
+        val tick = finder.search(current = emptyList(), offline = listOf(packPeak), mountains = bundled)
+        val stillInFlight = !search.isCompleted
+        release.countDown()
+        search.await()
+
+        assertThat(published).isNotNull()
+        assertThat(stillInFlight).isTrue()
+        assertThat(names(tick)).containsExactly("Pack Peak", "Bundled Peak")
+    }
+
     // ── The stale flag and the error ────────────────────────────────
 
     /** "possibly outdated" describes the peaks, not the last request: the reuse

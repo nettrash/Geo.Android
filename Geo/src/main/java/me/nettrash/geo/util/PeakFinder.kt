@@ -154,6 +154,16 @@ class PeakFinder @Inject constructor(
     @Volatile private var peaksAreStale = false
     @Volatile private var lastSearchError: String? = null
 
+    /// The peaks last handed out: returned, or published early. The caller keeps
+    /// the set it shows, but GeoViewModel lives as long as the activity and this
+    /// class as long as the process. After Back finishes the activity (Android
+    /// 9–11), a cached process's next GeoViewModel asks with an empty set while
+    /// the reuse state above still says "nothing to ask", and it got that empty
+    /// set back for up to 15 min. A caller that shows nothing although peaks
+    /// were handed out has lost them, so the search continues from these. (iOS
+    /// has no such split: its PeakFinder owns `peaks`.)
+    @Volatile private var lastHandedOut: List<NearbyPeak> = emptyList()
+
     /// Guards against overlapping searches: the AR tab asks every few seconds
     /// while a failover search can take tens of seconds, and concurrent
     /// searches would multiply the load on a shared public endpoint.
@@ -195,14 +205,16 @@ class PeakFinder @Inject constructor(
     /**
      * Search for peaks near [location] and merge with [currentPeaks].
      * Safe to call from a Compose coroutine — the network work runs
-     * on `Dispatchers.IO`.
+     * on `Dispatchers.IO`. An empty [currentPeaks] after peaks were handed out
+     * means the caller lost them, and the search continues from those (see
+     * [lastHandedOut]).
      *
      * When the search goes to the network, [onLocalPeaks] is called once, on
      * the caller's context and before the network is awaited, with what needs
-     * no network: [currentPeaks] (or the snapshot restored from disk) merged
-     * with the bundled mountains and [offlinePeaks]. A failover across every
-     * mirror can take ~25 s, and those peaks must not wait for it — nor vanish
-     * when it fails.
+     * no network: [currentPeaks] (or what was last handed out, or the snapshot
+     * restored from disk) merged with the bundled mountains and [offlinePeaks].
+     * A failover across every mirror can take ~25 s, and those peaks must not
+     * wait for it — nor vanish when it fails.
      */
     suspend fun searchPeaks(
         location: Location,
@@ -217,10 +229,13 @@ class PeakFinder @Inject constructor(
         // or garbage-low, which would wrongly hide visible peaks.
         val obsAlt = observerAltitude ?: location.altitude
 
+        // A caller with nothing on screen may only have lost what it was handed
+        // (see [lastHandedOut]): continue from that, as the caller before it
+        // would have.
+        var workingPeaks = currentPeaks.ifEmpty { lastHandedOut }
         // First search since the process started: the snapshot from the last
         // successful search is the baseline until the network says otherwise,
         // so an Overpass outage shows the last known peaks instead of nothing.
-        var workingPeaks = currentPeaks
         if (!didLoadPersisted) {
             didLoadPersisted = true
             if (workingPeaks.isEmpty()) {
@@ -272,9 +287,13 @@ class PeakFinder @Inject constructor(
         }
     }
 
-    /** [peaks] with the stale flag and the error as the last outcome left them. */
-    private fun resultOf(peaks: List<NearbyPeak>) =
-        PeakSearchResult(peaks, stale = peaksAreStale, error = lastSearchError)
+    /** [peaks] with the stale flag and the error as the last outcome left them,
+     *  remembered as [lastHandedOut]. Every result is made here, the early
+     *  publish included. */
+    private fun resultOf(peaks: List<NearbyPeak>): PeakSearchResult {
+        lastHandedOut = peaks
+        return PeakSearchResult(peaks, stale = peaksAreStale, error = lastSearchError)
+    }
 
     /**
      * Whether a downloaded offline pack covers here: any of its peaks within
@@ -313,10 +332,11 @@ class PeakFinder @Inject constructor(
         }
 
         // The local sources need no network, so they join what we already
-        // have (live peaks, or the snapshot restored from disk) BEFORE the
-        // network is awaited, and are published at once. Same 200 m
-        // de-duplication as the confirmed merge below (a peak already shown
-        // wins), and pack peaks are stamped fresh, as they are below.
+        // have (live peaks or the last ones handed out, or the snapshot
+        // restored from disk) BEFORE the network is awaited, and are published
+        // at once. Same 200 m de-duplication as the confirmed merge below (a
+        // peak already shown wins), and pack peaks are stamped fresh, as they
+        // are below.
         val (knownPeaks, localPeaks) = withContext(Dispatchers.IO) {
             val known = findKnownMountains(location, mountainsData, now)
             val working = previousPeaks.toMutableList()
@@ -426,8 +446,8 @@ class PeakFinder @Inject constructor(
             // Persisted on success only, so a failed search can never
             // overwrite a usable snapshot with an empty one.
             writeSnapshot(merged, location)
-            PeakSearchResult(merged)
-        }
+            merged
+        }.let(::resultOf)
     }
 
     private fun refreshGeometry(
