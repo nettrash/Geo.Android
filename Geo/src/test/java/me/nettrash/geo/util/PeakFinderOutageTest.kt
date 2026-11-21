@@ -55,6 +55,7 @@ class PeakFinderOutageTest {
     /** What a mirror answers: a summit ~1.6 km away, inside the live 5 km radius. */
     private val osmPeak = OverpassStub.Peak("OSM Peak", 45.9900, 7.6650, 3200.0)
     private val freshPeak = OverpassStub.Peak("Fresh Peak", 45.9700, 7.6800, 3100.0)
+    private val mirrorBPeak = OverpassStub.Peak("Mirror B Peak", 45.9850, 7.6450, 3000.0)
 
     /** A downloaded offline-pack peak ~4 km away, and one ~100 km away — beyond
      *  the 80 km render distance, so not "a pack for here". */
@@ -284,6 +285,59 @@ class PeakFinderOutageTest {
         assertThat(confirmed.error).isNull()
     }
 
+    // ── Overpass runtime errors ─────────────────────────────────────
+
+    /** Overpass reports a query that ran out of memory — or timed out on an
+     *  overloaded server — as HTTP 200 with an empty `elements` and the reason
+     *  in `remark` (seen live on overpass.openstreetmap.fr). That is the server
+     *  failing to answer, not "no peaks here": the next mirror is asked. */
+    @Test
+    fun aRuntimeErrorRemarkFailsOverToTheNextMirror() = runBlocking<Unit> {
+        val stub = OverpassStub { host ->
+            when (host) {
+                "overpass-api.de" -> OverpassStub.body(emptyList(), remark = OUT_OF_MEMORY)
+                "overpass.private.coffee" -> OverpassStub.body(listOf(mirrorBPeak))
+                else -> null
+            }
+        }
+        val result = finder(stub).search()
+
+        assertThat(names(result)).containsExactly("Mirror B Peak")
+        assertThat(result.stale).isFalse()
+        assertThat(stub.hosts).containsExactly("overpass-api.de", "overpass.private.coffee").inOrder()
+    }
+
+    /** Every mirror overloaded is a failed search — the peaks on screen stay,
+     *  marked stale — never a confirmed "none" that clears them, is reused for
+     *  15 min and overwrites the snapshot. The reason is the remark itself,
+     *  trimmed to 120 characters, and the match ignores case. */
+    @Test
+    fun runtimeErrorsOnEveryMirrorAreAFailureNotNoPeaks() = runBlocking<Unit> {
+        val remark = "Runtime error: Query timed out in \"query\" at line 2 after 10 seconds. " + "x".repeat(200)
+        val stub = OverpassStub { OverpassStub.body(emptyList(), remark = "  $remark\n") }
+        val result = finder(stub).search(current = listOf(keptPeak))
+
+        assertThat(stub.hosts).hasSize(PeakFinder.overpassEndpoints.size)
+        assertThat(names(result)).containsExactly("Kept")
+        assertThat(result.stale).isTrue()
+        assertThat(result.error).contains("overpass-api.de: ${remark.take(120)};")
+        assertThat(File(ctx.cacheDir, snapshotName).exists()).isFalse()
+    }
+
+    /** Only a runtime error is a failure; any other remark, or none, is an
+     *  answer as before. */
+    @Test
+    fun anyOtherRemarkIsStillAnAnswer() = runBlocking<Unit> {
+        val stub = OverpassStub {
+            OverpassStub.body(listOf(osmPeak), remark = "runtime remark: Timeout is 10 and maxsize is 536870912.")
+        }
+        val result = finder(stub).search()
+
+        assertThat(names(result)).containsExactly("OSM Peak")
+        assertThat(result.stale).isFalse()
+        assertThat(stub.hosts).hasSize(1)
+    }
+
     // ── The on-disk snapshot ────────────────────────────────────────
 
     /** The snapshot is derived data: it lives in the cache dir, which Auto
@@ -389,5 +443,9 @@ class PeakFinderOutageTest {
     private companion object {
         const val SECOND = 1_000L
         const val MINUTE = 60_000L
+
+        /** Verbatim from overpass.openstreetmap.fr, answered with HTTP 200. */
+        const val OUT_OF_MEMORY = "runtime error: Query ran out of memory in \"query\" at line 1. " +
+            "It would need at least 2 MB of RAM to continue."
     }
 }

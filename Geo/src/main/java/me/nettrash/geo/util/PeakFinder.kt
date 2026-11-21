@@ -580,7 +580,7 @@ class PeakFinder @Inject constructor(
         radiusMeters: Double
     ): OverpassAttempt {
         val host = endpoint.substringAfter("://").substringBefore('/')
-        val elements: List<OverpassElement> = try {
+        val decoded: OverpassResponse = try {
             val request = Request.Builder()
                 .url("$endpoint?data=$encodedQuery")
                 .header("User-Agent", TerrainElevationService.USER_AGENT)
@@ -590,12 +590,26 @@ class PeakFinder @Inject constructor(
                     AppLog.ar.warn("Overpass $host returned HTTP ${response.code}")
                     return OverpassAttempt.Rejected("HTTP ${response.code}")
                 }
-                json.decodeFromString<OverpassResponse>(response.body.string()).elements
+                json.decodeFromString<OverpassResponse>(response.body.string())
             }
         } catch (e: Exception) {
             AppLog.ar.warn("Overpass $host failed", e)
             return OverpassAttempt.Rejected(e.message ?: e.javaClass.simpleName)
         }
+
+        // A query that ran out of memory or timed out on a loaded server still
+        // comes back HTTP 200, with empty `elements` and the reason in `remark`
+        // ("runtime error: Query timed out in "query" at line 2 after 10
+        // seconds."). That is the server failing to answer, not "no peaks
+        // here" — taken as an answer it was reused for 15 min, cleared the
+        // peaks on screen and overwrote the snapshot. Any other remark, or
+        // none, is an answer as before.
+        val remark = decoded.remark
+        if (remark != null && remark.contains("runtime error", ignoreCase = true)) {
+            AppLog.ar.warn("Overpass $host answered with a runtime error: $remark")
+            return OverpassAttempt.Rejected(remark.trim().take(120))
+        }
+        val elements = decoded.elements
 
         // Stage 1: candidates that have an `ele` tag — keep them
         // directly. Candidates without `ele` go to a second stage
@@ -807,13 +821,20 @@ class PeakFinder @Inject constructor(
          * busy shared IP exhausts its quota, while the mirrors routinely serve
          * the identical query. One unhealthy instance no longer means an empty
          * Nature tab. Keep in step with iOS `PeakFinder.overpassEndpoints`.
+         *
+         * Only instances with GLOBAL data may be listed. A regional instance
+         * answers HTTP 200 with zero peaks everywhere outside its region, and
+         * that empty answer is indistinguishable from "no peaks here": the
+         * Switzerland-only `overpass.osm.ch` returned 0 peaks around Mont Blanc
+         * and Fuji, where a global instance returns 83 and 11.
          */
         val overpassEndpoints = listOf(
+            // FOSSGIS e.V., the main instance.
             "https://overpass-api.de/api/interpreter",
-            "https://overpass.kumi.systems/api/interpreter",
-            "https://overpass.openstreetmap.fr/api/interpreter",
-            "https://overpass.osm.ch/api/interpreter",
-            "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+            // Private.coffee (formerly overpass.kumi.systems).
+            "https://overpass.private.coffee/api/interpreter",
+            // OpenStreetMap France.
+            "https://overpass.openstreetmap.fr/api/interpreter"
         )
 
         /**
@@ -848,7 +869,10 @@ class PeakFinder @Inject constructor(
 
 @Serializable
 private data class OverpassResponse(
-    val elements: List<OverpassElement> = emptyList()
+    val elements: List<OverpassElement> = emptyList(),
+    /** Where Overpass reports a runtime error (out of memory, timed out) while
+     *  still answering HTTP 200; see [PeakFinder] `attemptOverpass`. */
+    val remark: String? = null
 )
 
 // Nodes-only query → no `center` field; everything is a top-level

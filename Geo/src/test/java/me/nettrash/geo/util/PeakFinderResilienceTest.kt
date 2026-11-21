@@ -17,7 +17,9 @@ import org.junit.Test
  * Android type in the signature is reached through the companion), so the tests
  * run on the JVM without a Robolectric sandbox — which also keeps them running
  * on JDKs new enough that the pinned Robolectric refuses to instrument
- * (`Unsupported class file major version`).
+ * (`Unsupported class file major version`). The search itself — failover, an
+ * outage, the stale flag, the snapshot — is driven end to end in
+ * [PeakFinderOutageTest], which does need Robolectric.
  */
 class PeakFinderResilienceTest {
 
@@ -70,15 +72,18 @@ class PeakFinderResilienceTest {
         assertThat(canReuse(successAgeMs = null, failureAgeMs = -2 * retryBackoffMs)).isFalse()
     }
 
-    @Test fun searchFailsOverAcrossDistinctMirrors() {
-        assertThat(PeakFinder.overpassEndpoints).isNotEmpty()
-        assertThat(PeakFinder.overpassEndpoints.size).isAtLeast(3)
-        val hosts = PeakFinder.overpassEndpoints.map { it.substringAfter("://").substringBefore('/') }
-        assertThat(hosts.toSet()).hasSize(PeakFinder.overpassEndpoints.size)
-        assertThat(PeakFinder.overpassEndpoints).contains("https://overpass-api.de/api/interpreter")
-        for (endpoint in PeakFinder.overpassEndpoints) {
-            assertThat(endpoint).endsWith("/api/interpreter")
-        }
+    /** Exactly the three instances that hold GLOBAL data, in preference order.
+     *  A regional one answers HTTP 200 with zero peaks everywhere outside its
+     *  region (overpass.osm.ch is Switzerland only: 0 peaks at Mont Blanc where
+     *  the others return 83), and the search must take any answer as "confirmed:
+     *  no peaks here" — so a list that merely contains the main instance pins
+     *  nothing. */
+    @Test fun mirrorsAreExactlyTheThreeGlobalInstances() {
+        assertThat(PeakFinder.overpassEndpoints).containsExactly(
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter",
+            "https://overpass.openstreetmap.fr/api/interpreter"
+        ).inOrder()
     }
 
     @Test fun rotationVisitsEveryMirrorExactlyOnce() {
