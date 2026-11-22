@@ -25,7 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.withSign
 
 /**
  * Discovers nearby peaks by merging:
@@ -900,8 +902,8 @@ class PeakFinder @Inject constructor(
         try {
             val snapshot = PeakSnapshot(
                 // ~1 km (2 decimal places) — see [PeakSnapshot].
-                centerLat = Math.round(center.latitude * 100.0) / 100.0,
-                centerLon = Math.round(center.longitude * 100.0) / 100.0,
+                centerLat = roundedToHundredths(center.latitude),
+                centerLon = roundedToHundredths(center.longitude),
                 savedAtMs = clock(),
                 entries = peaks.map {
                     PeakSnapshot.Entry(
@@ -928,6 +930,13 @@ class PeakFinder @Inject constructor(
             AppLog.ar.warn("Could not persist nearby-peak snapshot", e)
         }
     }
+
+    /** [value] to 2 decimal places, halves away from zero, as Swift's
+     *  `.rounded()` does on iOS. `Math.round` sends halves toward +∞, so a
+     *  centre on a tie was stored apart from iOS's: -122.125 became -122.12
+     *  here and -122.13 there. */
+    private fun roundedToHundredths(value: Double): Double =
+        Math.round(abs(value * 100.0)).toDouble().withSign(value) / 100.0
 
     companion object {
         /**

@@ -636,6 +636,16 @@ class PeakFinderOutageTest {
         val entry = snapshot.getValue("entries").jsonArray.single().jsonObject
         assertThat(entry.getValue("latitude").jsonPrimitive.double).isEqualTo(osmPeak.lat)
         assertThat(entry.getValue("longitude").jsonPrimitive.double).isEqualTo(osmPeak.lon)
+
+        // Halves round away from zero, as Swift's `.rounded()` does on iOS, so
+        // both store a centre on a tie alike: -122.125 is -122.13, not -122.12.
+        val tie = location(37.125, -122.125)
+        val tiePeak = OverpassStub.Peak("Tie Peak", 37.1300, -122.1200, 1100.0)
+        finder(OverpassStub { OverpassStub.body(listOf(tiePeak)) }).search(at = tie)
+        val rewritten = Json.parseToJsonElement(cached.readText()).jsonObject
+        assertThat(rewritten.getValue("centerLat").jsonPrimitive.double).isEqualTo(37.13)
+        assertThat(rewritten.getValue("centerLon").jsonPrimitive.double).isEqualTo(-122.13)
+        assertThat(ctx.cacheDir.list()!!.toSet() - before).containsExactly(snapshotName)
     }
 
     /** After a restart the last good set is the baseline — and it must show at
