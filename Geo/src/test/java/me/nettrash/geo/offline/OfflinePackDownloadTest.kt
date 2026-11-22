@@ -40,6 +40,7 @@ class OfflinePackDownloadTest {
     private val valleyPeak = OverpassStub.Peak("Valley Peak", 45.9900, 7.6650, 3200.0)
 
     private val failedMessage: String get() = ctx.getString(R.string.offline_download_failed)
+    private val updateFailedMessage: String get() = ctx.getString(R.string.offline_update_failed)
 
     @Before
     fun clean() = removePacks()
@@ -84,7 +85,8 @@ class OfflinePackDownloadTest {
         assertThat(repo.downloadError.value).isNull()
     }
 
-    /** An update that gets no answer keeps the pack exactly as it was, and says so. */
+    /** An update that gets no answer keeps the pack exactly as it was, and says
+     *  so: that the update failed, in the words iOS uses, not the download. */
     @Test
     fun aFailedUpdateKeepsThePackAndSaysWhy() = runBlocking<Unit> {
         val stub = OverpassStub { OverpassStub.body(listOf(valleyPeak)) }
@@ -98,7 +100,9 @@ class OfflinePackDownloadTest {
         assertThat(savedPacks().single().peakCount).isEqualTo(1)
         assertThat(OfflinePackStore(ctx).loadData(pack.id)!!.peaks.map { it.name })
             .containsExactly("Valley Peak")
-        assertThat(repo.downloadError.value).isEqualTo(failedMessage)
+        assertThat(repo.downloadError.value).isEqualTo(updateFailedMessage)
+        assertThat(updateFailedMessage)
+            .isEqualTo("Couldn't update peaks — no peak server answered. Try again later.")
     }
 
     /** The error belongs to the last attempt: the next download clears it as

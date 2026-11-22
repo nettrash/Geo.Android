@@ -165,7 +165,7 @@ class OfflinePackRepository @Inject constructor(
             val osm = when (val outcome = peakFinder.fetchPeaksForArea(pack.centerLat, pack.centerLon, pack.radiusKm * 1000.0)) {
                 // No answer: the saved pack stays exactly as it is.
                 is PeakFinder.PeakOutcome.Failure -> {
-                    _downloadError.value = context.getString(R.string.offline_download_failed)
+                    _downloadError.value = context.getString(R.string.offline_update_failed)
                     return
                 }
                 is PeakFinder.PeakOutcome.Success -> outcome.peaks
