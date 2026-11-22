@@ -3,6 +3,7 @@ package me.nettrash.geo.ui.nature
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.hardware.GeomagneticField
 import android.hardware.SensorManager
 import android.net.Uri
@@ -69,6 +70,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -633,12 +635,7 @@ private fun ArScene(
                     )
                     Spacer(Modifier.width(5.dp))
                     Text(
-                        pluralStringResource(
-                            R.plurals.nature_peaks_floor_hides_all,
-                            peaks.size,
-                            minPeakAltitude.toInt(),
-                            peaks.size
-                        ),
+                        minAltitudeFloorPillText(LocalResources.current, minPeakAltitude.toInt(), peaks.size),
                         color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
@@ -741,6 +738,23 @@ const val ALIGNMENT_MAX_OFFSET_DEG = 30.0
 fun alignmentOffsetDegrees(base: Double, panTranslationDp: Double): Double =
     (base + panTranslationDp / ALIGNMENT_PAN_DP_PER_DEGREE)
         .coerceIn(-ALIGNMENT_MAX_OFFSET_DEG, ALIGNMENT_MAX_OFFSET_DEG)
+
+/**
+ * The floor pill's text: "600 m floor hides 1 peak" for exactly one hidden
+ * peak, "600 m floor hides all N peaks" for any other count. The count picks
+ * the wording, as in iOS `minAltitudeFloorPillText`, not the device's plural
+ * rules: the app ships English text only, and a plural's item is picked by the
+ * rules of the language the phone is set to. Japanese has no `one` ("hides all
+ * 1 peaks"), and Russian counts 21 as `one` ("hides 21 peak"). Every other
+ * count still goes through the plural, which keeps lint's PluralsCandidate
+ * quiet where a plain string with "%2$d peaks" would not.
+ */
+internal fun minAltitudeFloorPillText(res: Resources, floorMetres: Int, hiddenCount: Int): String =
+    if (hiddenCount == 1) {
+        res.getString(R.string.nature_peaks_floor_hides_one, floorMetres)
+    } else {
+        res.getQuantityString(R.plurals.nature_peaks_floor_hides_all, hiddenCount, floorMetres, hiddenCount)
+    }
 
 /** Everest — the top of the min-altitude filter's range. */
 private const val MAX_FILTER_ALT = 8848f

@@ -286,8 +286,14 @@
         <item quantity="one">(%1$d hidden)</item>
         <item quantity="other">(%1$d hidden)</item>
     </plurals>
+    <string name="nature_peaks_floor_hides_one">%1$d m floor hides 1 peak</string>
+    <!-- Every count but one: minAltitudeFloorPillText picks
+         nature_peaks_floor_hides_one for exactly one peak, so it never reaches
+         this plural. Both items read the same on purpose, because the device's
+         plural rules, not English's, pick the item: a Japanese phone has no
+         "one" and picks "other" for 1, a Russian one picks "one" for 21. -->
     <plurals name="nature_peaks_floor_hides_all">
-        <item quantity="one">%1$d m floor hides %2$d peak</item>
+        <item quantity="one">%1$d m floor hides all %2$d peaks</item>
         <item quantity="other">%1$d m floor hides all %2$d peaks</item>
     </plurals>
     <string name="ar_about_undetermined">The Nature view shows nearby mountain peaks overlaid on the camera. Continue to choose whether to grant camera access.</string>
