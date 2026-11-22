@@ -367,6 +367,66 @@ class PeakFinderOutageTest {
         assertThat(recovered.stale).isFalse()
     }
 
+    /** Most ticks of an outage never reach the network: inside the 60 s retry
+     *  backoff they take the reuse path. It confirms nothing, so it may expire
+     *  nothing either, also once the last answer is more than an hour old.
+     *  Mirrors iOS `testReuseTickPastTheTTLKeepsTheCarriedOverPeaks`. */
+    @Test
+    fun aReuseTickPastTheTtlKeepsTheCarriedOverPeaks() = runBlocking<Unit> {
+        val now = AtomicLong(System.currentTimeMillis())
+        val stub = OverpassStub { OverpassStub.body(listOf(osmPeak, freshPeak)) }
+        val finder = finder(stub, now)
+        val confirmed = finder.search()                          // the last confirmed answer
+        assertThat(names(confirmed)).containsExactly("OSM Peak", "Fresh Peak")
+
+        stub.answer = { null }
+        now.addAndGet(59 * MINUTE + 30 * SECOND)                 // past the cache age, not yet the TTL
+        val failed = finder.search(current = confirmed.peaks)    // fails: the retry backoff starts
+        assertThat(failed.error).isNotNull()
+        val asked = stub.hosts.size
+
+        now.addAndGet(45 * SECOND)                               // past the TTL, still inside the backoff
+        val tick = finder.search(current = failed.peaks)
+        assertThat(stub.hosts).hasSize(asked)                    // the reuse path: nothing was asked
+        assertThat(names(tick)).containsExactly("OSM Peak", "Fresh Peak")
+    }
+
+    /** The same for a tick that lands while a search is still in flight: a
+     *  failover can take ~30 s, so one can straddle the TTL. Mirrors iOS
+     *  `testInFlightTickPastTheTTLKeepsTheCarriedOverPeaks`. */
+    @Test
+    fun anInFlightTickPastTheTtlKeepsTheCarriedOverPeaks() = runBlocking<Unit> {
+        val now = AtomicLong(System.currentTimeMillis())
+        val stub = OverpassStub { OverpassStub.body(listOf(osmPeak, freshPeak)) }
+        val finder = finder(stub, now)
+        val confirmed = finder.search()                          // the last confirmed answer
+        assertThat(names(confirmed)).containsExactly("OSM Peak", "Fresh Peak")
+
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        stub.answer = { entered.countDown(); release.await(10, TimeUnit.SECONDS); null }
+        now.addAndGet(59 * MINUTE + 30 * SECOND)                 // past the cache age, not yet the TTL
+        val early = CompletableDeferred<PeakFinder.PeakSearchResult>()
+        val retry = async(Dispatchers.IO) {
+            finder.search(current = confirmed.peaks, onLocal = { early.complete(it) })
+        }
+        val held = entered.await(5, TimeUnit.SECONDS)            // the first mirror holds the request
+        val published = withTimeoutOrNull(5_000) { early.await() }
+
+        now.addAndGet(45 * SECOND)                               // still in flight, now past the TTL
+        val tick = finder.search(current = published?.peaks.orEmpty())   // a refresh tick lands mid-search
+        val stillInFlight = !retry.isCompleted
+        release.countDown()
+        val afterFailure = retry.await()
+
+        assertThat(held).isTrue()
+        assertThat(published).isNotNull()
+        assertThat(stillInFlight).isTrue()
+        assertThat(names(tick)).containsExactly("OSM Peak", "Fresh Peak")
+        assertThat(names(afterFailure)).containsExactly("OSM Peak", "Fresh Peak")
+        assertThat(afterFailure.stale).isTrue()
+    }
+
     // ── A caller that has lost its peaks ────────────────────────────
 
     /** GeoViewModel lives as long as the activity, this singleton as long as
@@ -683,7 +743,11 @@ class PeakFinderOutageTest {
     }
 
     /** Restored where a downloaded pack covers here: the pack is the offline
-     *  answer, so nothing is "possibly outdated" — before the failure or after. */
+     *  answer, so nothing is "possibly outdated" — not in the early publish
+     *  while the first mirror holds the request, not for a tick that lands
+     *  then, and not after the failure. The restore itself must not raise the
+     *  label, or it would show under a covering pack for up to ~30 s. Mirrors
+     *  iOS `testRestoredSnapshotUnderAnOfflinePackIsNotPossiblyOutdated`. */
     @Test
     fun aRestoredSnapshotIsNotOutdatedWhereAPackCoversHere() = runBlocking<Unit> {
         finder(OverpassStub { OverpassStub.body(listOf(osmPeak)) }).search()
@@ -695,11 +759,16 @@ class PeakFinderOutageTest {
             restarted.search(offline = listOf(packPeak), onLocal = { early.complete(it) })
         }
         val published = withTimeoutOrNull(5_000) { early.await() }
+        val tick = restarted.search(current = published?.peaks.orEmpty(), offline = listOf(packPeak))
+        val stillInFlight = !search.isCompleted
         release.countDown()
         val afterFailure = search.await()
 
         assertThat(published).isNotNull()
-        assertThat(published!!.stale).isFalse()
+        assertThat(stillInFlight).isTrue()
+        assertThat(names(published!!)).containsExactly("OSM Peak", "Pack Peak")
+        assertThat(published.stale).isFalse()
+        assertThat(tick.stale).isFalse()
         assertThat(names(afterFailure)).containsExactly("OSM Peak", "Pack Peak")
         assertThat(afterFailure.stale).isFalse()
     }
