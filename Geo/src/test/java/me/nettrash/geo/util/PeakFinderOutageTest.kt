@@ -557,6 +557,47 @@ class PeakFinderOutageTest {
         assertThat(File(ctx.cacheDir, snapshotName).exists()).isFalse()
     }
 
+    // ── What counts as an Overpass answer ───────────────────────────
+
+    /** A 200 JSON body without `elements` (a proxy's, say) is not an Overpass
+     *  answer. With `elements` defaulting to empty it decoded as a confirmed
+     *  "no peaks here": reused for 15 min, the snapshot rewritten, a 0-peak
+     *  pack saved. It is rejected, as on iOS, and the next mirror is asked. */
+    @Test
+    fun aBodyWithoutElementsFailsOverToTheNextMirror() = runBlocking<Unit> {
+        val stub = OverpassStub { host ->
+            when (host) {
+                "overpass-api.de" -> """{"version":0.6,"generator":"stub","osm3s":{}}"""
+                "overpass.private.coffee" -> OverpassStub.body(listOf(mirrorBPeak))
+                else -> null
+            }
+        }
+        val result = finder(stub).search()
+
+        assertThat(names(result)).containsExactly("Mirror B Peak")
+        assertThat(result.stale).isFalse()
+        assertThat(stub.hosts).containsExactly("overpass-api.de", "overpass.private.coffee").inOrder()
+    }
+
+    /** Only HTTP 200 is an answer, as on iOS: any other 2xx, a transforming
+     *  proxy's 203 say, is rejected with its code, even when the body reads
+     *  like an empty answer. Here every mirror does it, so the search fails:
+     *  the peaks on screen stay, marked stale, and nothing is written. */
+    @Test
+    fun aSuccessCodeOtherThan200IsNotAnAnswer() = runBlocking<Unit> {
+        val stub = OverpassStub { OverpassStub.body(emptyList()) }
+        stub.status = { 203 }
+        val result = finder(stub).search(current = listOf(keptPeak))
+
+        assertThat(stub.hosts).hasSize(PeakFinder.overpassEndpoints.size)
+        assertThat(names(result)).containsExactly("Kept")
+        assertThat(result.stale).isTrue()
+        assertThat(result.error).isEqualTo(
+            "overpass-api.de: HTTP 203; overpass.private.coffee: HTTP 203; overpass.openstreetmap.fr: HTTP 203"
+        )
+        assertThat(File(ctx.cacheDir, snapshotName).exists()).isFalse()
+    }
+
     /** Only a runtime error is a failure; any other remark, or none, is an
      *  answer as before. */
     @Test

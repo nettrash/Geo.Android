@@ -14,8 +14,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * A stand-in for the public Overpass mirrors, so a peak search can be driven
  * with no network at all: an OkHttp interceptor that never calls `proceed` and
  * answers each request from [answer], by host — the JSON body to return with
- * HTTP 200, or `null` for "unreachable" (an [IOException], which is what a
- * phone with no signal sees). [answer] may block, to hold a search in flight.
+ * HTTP [status] (200 unless a test says otherwise), or `null` for
+ * "unreachable" (an [IOException], which is what a phone with no signal
+ * sees). [answer] may block, to hold a search in flight.
  *
  * Every stubbed peak carries an `ele` tag, so no answer ever sends the search
  * on to the Open-Meteo DEM lookup.
@@ -27,6 +28,9 @@ internal class OverpassStub(
     /** Every host asked, in order. */
     val hosts: MutableList<String> = CopyOnWriteArrayList()
 
+    /** The HTTP status each host answers [answer]'s body with. */
+    @Volatile var status: (host: String) -> Int = { 200 }
+
     /** A client whose only "network" is this stub. Deliberately without the
      *  production `RetryInterceptor`, so there is no 1 s spacing either. */
     fun client(): OkHttpClient = OkHttpClient.Builder().addInterceptor(this).build()
@@ -35,11 +39,12 @@ internal class OverpassStub(
         val host = chain.request().url.host
         hosts += host
         val body = answer(host) ?: throw IOException("$host unreachable (stub)")
+        val code = status(host)
         return Response.Builder()
             .request(chain.request())
             .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
+            .code(code)
+            .message(if (code == 200) "OK" else "Stub")
             .body(body.toResponseBody("application/json".toMediaType()))
             .build()
     }

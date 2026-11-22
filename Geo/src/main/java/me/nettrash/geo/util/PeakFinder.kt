@@ -677,10 +677,15 @@ class PeakFinder @Inject constructor(
                 .header("User-Agent", TerrainElevationService.USER_AGENT)
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
+                // Only a 200 carries an Overpass answer, as on iOS. Any other
+                // 2xx (a proxy's 203, say) is not Overpass answering, and taken
+                // as one its body could read as "no peaks here".
+                if (response.code != 200) {
                     AppLog.ar.warn("Overpass $host returned HTTP ${response.code}")
                     return OverpassAttempt.Rejected("HTTP ${response.code}")
                 }
+                // A body without `elements` does not decode (see
+                // [OverpassResponse]), and the catch below rejects it.
                 json.decodeFromString<OverpassResponse>(response.body.string())
             }
         } catch (e: Exception) {
@@ -960,9 +965,13 @@ class PeakFinder @Inject constructor(
     }
 }
 
+/** `elements` is required, as on iOS: a JSON body without it (a proxy's, say)
+ *  is not an Overpass answer. With an empty default it decoded as a confirmed
+ *  "no peaks here", reused for 15 min, written to the snapshot and saved as a
+ *  0-peak pack. */
 @Serializable
 private data class OverpassResponse(
-    val elements: List<OverpassElement> = emptyList(),
+    val elements: List<OverpassElement>,
     /** Where Overpass reports a runtime error (out of memory, timed out) while
      *  still answering HTTP 200; see [PeakFinder] `attemptOverpass`. */
     val remark: String? = null
