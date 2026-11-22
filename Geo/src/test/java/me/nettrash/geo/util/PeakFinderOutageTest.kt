@@ -617,13 +617,18 @@ class PeakFinderOutageTest {
     /** The snapshot is derived data: it lives in the cache dir, which Auto
      *  Backup excludes, and keeps the point it was searched from only to ~1 km
      *  (2 decimal places) — all the 50 km "is this for here?" check needs. The
-     *  peaks keep their exact coordinates. */
+     *  peaks keep their exact coordinates. It is written atomically, through a
+     *  sibling that exists only while a write is in progress, so once written
+     *  the file is all the search added to the cache dir. (Robolectric keeps a
+     *  `var/` tree of its own there.) */
     @Test
     fun theSnapshotLivesInTheCacheDirWithItsCentreRounded() = runBlocking<Unit> {
+        val before = ctx.cacheDir.list()!!.toSet()
         finder(OverpassStub { OverpassStub.body(listOf(osmPeak)) }).search()
 
         val cached = File(ctx.cacheDir, snapshotName)
         assertThat(cached.exists()).isTrue()
+        assertThat(ctx.cacheDir.list()!!.toSet() - before).containsExactly(snapshotName)
         assertThat(File(ctx.filesDir, snapshotName).exists()).isFalse()
         val snapshot = Json.parseToJsonElement(cached.readText()).jsonObject
         assertThat(snapshot.getValue("centerLat").jsonPrimitive.double).isEqualTo(45.98)

@@ -3,6 +3,7 @@ package me.nettrash.geo.util
 import android.content.Context
 import android.location.Location
 import androidx.annotation.VisibleForTesting
+import androidx.core.util.AtomicFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -17,6 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -843,8 +845,12 @@ class PeakFinder @Inject constructor(
 
     /** In the cache dir, not the files dir: this is derived, re-downloadable
      *  data — and Auto Backup excludes the cache dir, so the rounded point a
-     *  search was made from never leaves the device in a backup. */
-    private fun snapshotFile(): File = File(context.cacheDir, "nearby_peaks_cache.json")
+     *  search was made from never leaves the device in a backup. An
+     *  [AtomicFile], as iOS writes it `.atomic`: a write goes to a sibling that
+     *  replaces the file only once complete. Rewritten in place, a kill
+     *  mid-write left a truncated file that did not decode, so the next cold
+     *  start with no signal restored nothing. */
+    private fun snapshotFile(): AtomicFile = AtomicFile(File(context.cacheDir, "nearby_peaks_cache.json"))
 
     /**
      * Restore the persisted snapshot if it is recent enough and near enough to
@@ -856,9 +862,12 @@ class PeakFinder @Inject constructor(
      */
     private fun readSnapshot(location: Location): List<NearbyPeak>? {
         return try {
-            val file = snapshotFile()
-            if (!file.exists()) return null
-            val snapshot = json.decodeFromString<PeakSnapshot>(file.readText())
+            val bytes = try {
+                snapshotFile().readFully()
+            } catch (e: FileNotFoundException) {
+                return null   // nothing saved yet
+            }
+            val snapshot = json.decodeFromString<PeakSnapshot>(bytes.decodeToString())
             val ageMs = clock() - snapshot.savedAtMs
             if (ageMs > persistedMaxAgeMs) return null
             val cachedCenter = Location("").apply {
@@ -903,7 +912,18 @@ class PeakFinder @Inject constructor(
                     )
                 }
             )
-            snapshotFile().writeText(json.encodeToString(PeakSnapshot.serializer(), snapshot))
+            val bytes = json.encodeToString(PeakSnapshot.serializer(), snapshot).encodeToByteArray()
+            val file = snapshotFile()
+            val out = file.startWrite()
+            var written = false
+            try {
+                out.write(bytes)
+                written = true
+            } finally {
+                // Replace the snapshot only with a complete one; otherwise drop
+                // the partial sibling and keep the last good snapshot.
+                if (written) file.finishWrite(out) else file.failWrite(out)
+            }
         } catch (e: Exception) {
             AppLog.ar.warn("Could not persist nearby-peak snapshot", e)
         }
