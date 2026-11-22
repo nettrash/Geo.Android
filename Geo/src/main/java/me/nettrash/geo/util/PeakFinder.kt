@@ -46,15 +46,18 @@ import kotlin.math.withSign
  *     out to [maxPeakRenderDistanceM] rather than [searchRadius] —
  *     they need no network, and a famous summit is something you
  *     name from a long way off.
+ *   • Peaks from downloaded offline packs, which need no network
+ *     either.
  *
  * Direct port of iOS `Nature/PeakFinder.swift`. Two behaviours that
  * weren't in the previous Android version but matter a lot:
  *
- *   1. **Merge-by-ID with hysteresis**: a fresh search result merges
- *      into the existing list rather than replacing it. Peaks survive
- *      until they fall outside `searchRadius × 2`; this stops the AR
- *      overlay from flickering when Overpass returns nothing for a
- *      tick.
+ *   1. **Merge with hysteresis**: a fresh search result merges into
+ *      the existing list rather than replacing it — by id, and a
+ *      carried-over peak with a fresh one within 200 m is replaced by
+ *      it. Peaks survive until they fall outside
+ *      [maxPeakRenderDistanceM]; this stops the AR overlay from
+ *      flickering when Overpass returns nothing for a tick.
  *   2. **TTL eviction**: peaks not re-confirmed in [peakTtlMs] ms drop
  *      out so the list doesn't grow forever when the user sits still
  *      for hours — but only when a confirmed answer arrives, so an
