@@ -232,6 +232,80 @@ class PeakFinderOutageTest {
         assertThat(names(result)).containsExactlyElementsIn(expected).inOrder()
     }
 
+    // ── A confirmed answer and the peaks carried over ───────────────
+
+    /** After a failed search the caller shows the local merge, a bundled summit
+     *  included, and hands it back as `currentPeaks` (GeoViewModel's `_peaks`).
+     *  The next answer brings the OSM node for the same mountain: ~68 m away,
+     *  under another name, so another id. Carried over by id, the bundled
+     *  summit stood next to it until the TTL dropped it, up to an hour later. A
+     *  confirmed answer replaces any carried-over peak within 200 m of one of
+     *  its peaks, and the next answer does not bring it back. */
+    @Test
+    fun aConfirmedAnswerReplacesACarriedOverPeakWithin200m() = runBlocking<Unit> {
+        val now = AtomicLong(System.currentTimeMillis())
+        val stub = OverpassStub { null }
+        val finder = finder(stub, now)
+        val summit = MountainData(
+            highest = MountainList(
+                mountains = listOf(
+                    MountainInfo(
+                        name = "Bundled Summit",
+                        height = 3200,
+                        coordinates = MountainCoordinates(45.9900, 7.6650)
+                    )
+                )
+            )
+        )
+        val node = OverpassStub.Peak("OSM Summit", 45.9905, 7.6655, 3205.0)
+        assertThat(GeoCalculations.distanceBetween(45.9900, 7.6650, node.lat, node.lon)).isWithin(1.0).of(68.0)
+
+        val failed = finder.search(mountains = summit)
+        assertThat(names(failed)).containsExactly("Bundled Summit")
+        assertThat(failed.stale).isTrue()
+
+        stub.answer = { OverpassStub.body(listOf(node)) }
+        now.addAndGet(61 * SECOND)       // past the retry backoff
+        val confirmed = finder.search(current = failed.peaks, mountains = summit)
+        assertThat(names(confirmed)).containsExactly("OSM Summit")
+        val asked = stub.hosts.size
+
+        now.addAndGet(16 * MINUTE)       // past the cache age, so asked again
+        val later = finder.search(current = confirmed.peaks, mountains = summit)
+        assertThat(stub.hosts).hasSize(asked + 1)
+        assertThat(names(later)).containsExactly("OSM Summit")
+    }
+
+    /** Only within 200 m: a carried-over peak 250 m from every peak of the
+     *  answer is another summit, and is carried over as before. */
+    @Test
+    fun aCarriedOverPeak250mFromEveryAnsweredPeakIsKept() = runBlocking<Unit> {
+        val neighbour = NearbyPeak.create("Neighbour", osmPeak.lat + 250.0 / METRES_PER_DEGREE, osmPeak.lon, 3100.0, 0.0, 0.0)
+        assertThat(metres(osmPeak.lat, osmPeak.lon, neighbour)).isWithin(0.5).of(250.0)
+
+        val result = finder(OverpassStub { OverpassStub.body(listOf(osmPeak)) }).search(current = listOf(neighbour))
+
+        assertThat(names(result)).containsExactly("OSM Peak", "Neighbour")
+    }
+
+    /** And the nodes of one answer are never checked against each other: two
+     *  OSM nodes 150 m apart are two summits, shown both, and still both when
+     *  the next answer finds them carried over. */
+    @Test
+    fun twoNodesOfOneAnswer150mApartAreBothKept() = runBlocking<Unit> {
+        val now = AtomicLong(System.currentTimeMillis())
+        val twin = OverpassStub.Peak("OSM Twin", osmPeak.lat + 150.0 / METRES_PER_DEGREE, osmPeak.lon, 3150.0)
+        assertThat(GeoCalculations.distanceBetween(osmPeak.lat, osmPeak.lon, twin.lat, twin.lon)).isWithin(0.5).of(150.0)
+        val finder = finder(OverpassStub { OverpassStub.body(listOf(osmPeak, twin)) }, now)
+
+        val first = finder.search()
+        assertThat(names(first)).containsExactly("OSM Peak", "OSM Twin")
+
+        now.addAndGet(16 * MINUTE)       // past the cache age, so asked again
+        val next = finder.search(current = first.peaks)
+        assertThat(names(next)).containsExactly("OSM Peak", "OSM Twin")
+    }
+
     /** [count] peaks at 3000 m, scattered over 0.03° (~3.3 km) around
      *  ([lat], [lon]) and named "[prefix] <i>". */
     private fun Random.scatter(prefix: String, count: Int, lat: Double, lon: Double) = List(count) { i ->
@@ -602,6 +676,9 @@ class PeakFinderOutageTest {
     private companion object {
         const val SECOND = 1_000L
         const val MINUTE = 60_000L
+
+        /** One degree of latitude on the sphere [GeoCalculations] measures on. */
+        const val METRES_PER_DEGREE = GeoCalculations.EARTH_RADIUS * Math.PI / 180.0
 
         /** Verbatim from overpass.openstreetmap.fr, answered with HTTP 200. */
         const val OUT_OF_MEMORY = "runtime error: Query ran out of memory in \"query\" at line 1. " +

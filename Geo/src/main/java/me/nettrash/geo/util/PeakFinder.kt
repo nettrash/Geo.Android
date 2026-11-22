@@ -427,11 +427,24 @@ class PeakFinder @Inject constructor(
                 }
             }
 
-            // Merge: previous list provides identity continuity,
-            // fresh results win on duplicate IDs (so distance / bearing
-            // / lastSeenAt get updated).
+            // Merge with the previous set, so a peak this answer did not return
+            // stays until the TTL below drops it: a transient empty or partial
+            // answer must not wipe peaks that are still valid. But a previous
+            // peak with a fresh peak within 200 m is a duplicate of it, and is
+            // replaced by it whatever its id. After a failed search the caller
+            // hands back the local merge, bundled summits included, and the OSM
+            // node for the same mountain arrives under another id: carried
+            // over by id, both labels showed until the TTL dropped the bundled
+            // one, up to an hour later. A previous peak with the same id as a
+            // fresh one is replaced as before, so the fresh distance, bearing
+            // and lastSeenAt win. The fresh peaks then go in by id, never
+            // checked against each other here: steps 2 and 3 settled the
+            // duplicates of the local sources, and two nodes of one answer are
+            // two summits.
             val byId = HashMap<UUID, NearbyPeak>()
-            for (p in previousPeaks) byId[p.id] = p
+            for (p in previousPeaks) {
+                if (!fresh.isDuplicate(p)) byId[p.id] = p
+            }
             for (p in freshPeaks) byId[p.id] = p
 
             // Keep peaks out to the render distance (not just the 5 km search
