@@ -162,7 +162,7 @@ class PeakFinderOutageTest {
         assertThat(names(afterFailure)).containsExactly("Pack Peak", "Bundled Peak")
     }
 
-    // ── The local merge's duplicate check ───────────────────────────
+    // ── The merges' duplicate check ─────────────────────────────────
 
     /** The local merge checks every pack peak (up to 4000 a pack, on every
      *  network search) against everything merged before it through a
@@ -174,34 +174,90 @@ class PeakFinderOutageTest {
     fun theLocalMergeKeepsExactlyWhatThe200mRuleKeeps() = runBlocking<Unit> {
         val random = Random(26)
         val origin = location(-0.0005, 37.0)
-        fun scatter(prefix: String, count: Int, lon: Double) = List(count) { i ->
-            NearbyPeak.create(
-                "$prefix $i",
-                origin.latitude + (random.nextDouble() - 0.5) * 0.03,
-                lon + (random.nextDouble() - 0.5) * 0.03,
-                3000.0, 0.0, 0.0
-            )
-        }
-        val current = scatter("Current", 20, origin.longitude)
-        val pack = scatter("Far", 300, origin.longitude + 1.0) + scatter("Near", 1500, origin.longitude)
+        val current = random.scatter("Current", 20, origin.latitude, origin.longitude)
+        val pack = random.scatter("Far", 300, origin.latitude, origin.longitude + 1.0) +
+            random.scatter("Near", 1500, origin.latitude, origin.longitude)
 
         val result = finder(OverpassStub { null }).search(at = origin, current = current, offline = pack)
 
-        fun metresFrom(lat: Double, lon: Double, peak: NearbyPeak) =
-            GeoCalculations.distanceBetween(lat, lon, peak.latitude, peak.longitude)
-        val kept = current.toMutableList()
-        for (peak in pack) {
-            if (kept.none { metresFrom(it.latitude, it.longitude, peak) < 200 }) kept += peak
-        }
-        val expected = kept
-            .filter { metresFrom(origin.latitude, origin.longitude, it) <= 80_000 }
-            .sortedBy { metresFrom(origin.latitude, origin.longitude, it) }
-            .map { it.name }
+        val expected = keptBy200mRule(origin, kept = current, candidates = pack)
         // Dense enough that most of the pack is dropped, and under the 300 cap,
         // so every peak the rule keeps is compared.
         assertThat(expected.size).isAtLeast(100)
         assertThat(expected.size).isLessThan(300)
         assertThat(names(result)).containsExactlyElementsIn(expected).inOrder()
+    }
+
+    /** ...and so must the confirmed merge, which checks the bundled mountains,
+     *  then every pack peak, against the answer and everything accepted before
+     *  it. The answer's own nodes are never checked against each other, so the
+     *  rule starts from all of them: here 60 nodes, some within 200 m of
+     *  another, then 150 bundled summits and the two packs above, all
+     *  straddling latitude bands and the equator. */
+    @Test
+    fun theConfirmedMergeKeepsExactlyWhatThe200mRuleKeeps() = runBlocking<Unit> {
+        val random = Random(25)
+        val origin = location(-0.0005, 37.0)
+        val answer = random.scatter("OSM", 60, origin.latitude, origin.longitude)
+        val known = random.scatter("Bundled", 150, origin.latitude, origin.longitude)
+        val pack = random.scatter("Far", 300, origin.latitude, origin.longitude + 1.0) +
+            random.scatter("Near", 1500, origin.latitude, origin.longitude)
+        val stub = OverpassStub {
+            OverpassStub.body(answer.map { OverpassStub.Peak(it.name, it.latitude, it.longitude, it.altitude) })
+        }
+        val mountains = MountainData(
+            highest = MountainList(
+                mountains = known.map {
+                    MountainInfo(
+                        name = it.name,
+                        height = it.altitude.toInt(),
+                        coordinates = MountainCoordinates(it.latitude, it.longitude)
+                    )
+                }
+            )
+        )
+
+        val result = finder(stub).search(at = origin, offline = pack, mountains = mountains)
+
+        val expected = keptBy200mRule(origin, kept = answer, candidates = known + pack)
+        val answerNodesNearAnother = answer.count { node ->
+            answer.any { it !== node && metres(it.latitude, it.longitude, node) < 200 }
+        }
+        assertThat(result.stale).isFalse()
+        assertThat(answerNodesNearAnother).isAtLeast(2)
+        // Dense enough that most of the local peaks are dropped, and under the
+        // 300 cap, so every peak the rule keeps is compared.
+        assertThat(expected.size).isAtLeast(100)
+        assertThat(expected.size).isLessThan(300)
+        assertThat(names(result)).containsExactlyElementsIn(expected).inOrder()
+    }
+
+    /** [count] peaks at 3000 m, scattered over 0.03° (~3.3 km) around
+     *  ([lat], [lon]) and named "[prefix] <i>". */
+    private fun Random.scatter(prefix: String, count: Int, lat: Double, lon: Double) = List(count) { i ->
+        NearbyPeak.create(
+            "$prefix $i",
+            lat + (nextDouble() - 0.5) * 0.03,
+            lon + (nextDouble() - 0.5) * 0.03,
+            3000.0, 0.0, 0.0
+        )
+    }
+
+    private fun metres(lat: Double, lon: Double, peak: NearbyPeak) =
+        GeoCalculations.distanceBetween(lat, lon, peak.latitude, peak.longitude)
+
+    /** The names the 200 m rule, applied pair by pair, keeps: all of [kept],
+     *  then each of [candidates] with nothing kept so far within 200 m. In the
+     *  order they are shown: out to the 80 km render distance, nearest first. */
+    private fun keptBy200mRule(origin: Location, kept: List<NearbyPeak>, candidates: List<NearbyPeak>): List<String> {
+        val shown = kept.toMutableList()
+        for (peak in candidates) {
+            if (shown.none { metres(it.latitude, it.longitude, peak) < 200 }) shown += peak
+        }
+        return shown
+            .filter { metres(origin.latitude, origin.longitude, it) <= 80_000 }
+            .sortedBy { metres(origin.latitude, origin.longitude, it) }
+            .map { it.name }
     }
 
     // ── No TTL expiry during an outage ──────────────────────────────

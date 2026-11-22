@@ -398,13 +398,20 @@ class PeakFinder @Inject constructor(
         peaksAreStale = false
 
         withContext(Dispatchers.IO) {
+            // The answer's own nodes are never checked against each other. The
+            // local sources are, against the answer and everything accepted
+            // before them, through a [DuplicateIndex] as in the local merge:
+            // every pack peak is checked here too, once per confirmed answer,
+            // and the whole-list scan made that quadratic in them.
             val freshPeaks = osmPeaks.toMutableList()
+            val fresh = DuplicateIndex(freshPeaks)
 
             // Peaks neither OSM nor the DEM can give an altitude for are
             // dropped inside [fetchPeakOutcome] — no placeholder heights.
             for (peak in knownPeaks) {
-                if (!isDuplicate(peak, freshPeaks)) {
+                if (!fresh.isDuplicate(peak)) {
                     freshPeaks.add(peak)
+                    fresh.add(peak)
                 }
             }
 
@@ -413,8 +420,10 @@ class PeakFinder @Inject constructor(
             // them fresh so the TTL prune below doesn't drop them on merge;
             // the drop-radius filter still removes any too far to see.
             for (peak in offlinePeaks) {
-                if (!isDuplicate(peak, freshPeaks)) {
-                    freshPeaks.add(peak.copy(lastSeenAt = answeredAt))
+                if (!fresh.isDuplicate(peak)) {
+                    val stamped = peak.copy(lastSeenAt = answeredAt)
+                    freshPeaks.add(stamped)
+                    fresh.add(stamped)
                 }
             }
 
@@ -512,10 +521,11 @@ class PeakFinder @Inject constructor(
 
     /**
      * [isDuplicate] for a set that grows one peak at a time, without scanning
-     * the whole set for every peak. The local merge in [executeSearch] checks
-     * every pack peak (4000 a pack, more with several) on every network search,
-     * the retries of an outage included, and the whole-set scan made that
-     * quadratic: about 3 s per search with three full packs on a desktop JVM.
+     * the whole set for every peak. Both merges in [executeSearch] check every
+     * pack peak (4000 a pack, more with several): the local one on every
+     * network search, the retries of an outage included, and the confirmed one
+     * on every answer. The whole-set scan made each quadratic: about 3 s with
+     * three full packs on a desktop JVM.
      *
      * Peaks are kept in latitude bands of [duplicateBandDegrees]. A
      * great-circle distance is never shorter than its north–south part, so two
