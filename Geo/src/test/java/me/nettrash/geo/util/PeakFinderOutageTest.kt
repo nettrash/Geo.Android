@@ -648,6 +648,43 @@ class PeakFinderOutageTest {
         assertThat(afterFailure.stale).isFalse()
     }
 
+    /** "possibly outdated" is about the restored peaks that will be shown, not
+     *  about what the file holds. A snapshot whose only peak lies beyond the
+     *  80 km render distance shows nothing here, yet it labelled the bundled
+     *  summit next to it "possibly outdated" for the whole failover. As on
+     *  iOS, which judges the pruned set. */
+    @Test
+    fun aRestoredSnapshotWithNothingInRangeIsNotPossiblyOutdated() = runBlocking<Unit> {
+        // Answered ~45 km north with no OSM peaks, under a pack whose one peak
+        // is ~72 km further north: the snapshot holds just that peak, ~117 km
+        // from here, and its centre is close enough to be restored here.
+        val north = location(here.latitude + 0.4, here.longitude)
+        val farNorth = NearbyPeak.create("Far North", here.latitude + 1.05, here.longitude, 4000.0, 0.0, 0.0)
+        finder(OverpassStub { OverpassStub.body(emptyList()) }).search(at = north, offline = listOf(farNorth))
+        val entries = Json.parseToJsonElement(File(ctx.cacheDir, snapshotName).readText())
+            .jsonObject.getValue("entries").jsonArray
+        assertThat(entries.map { it.jsonObject.getValue("name").jsonPrimitive.content }).containsExactly("Far North")
+        assertThat(metres(here.latitude, here.longitude, farNorth)).isGreaterThan(80_000.0)
+
+        // A restart here with no pack, a bundled summit ~17 km away, and the
+        // first mirror holding the request.
+        val release = CountDownLatch(1)
+        val restarted = finder(OverpassStub { release.await(10, TimeUnit.SECONDS); null })
+        val early = CompletableDeferred<PeakFinder.PeakSearchResult>()
+        val search = async(Dispatchers.IO) {
+            restarted.search(mountains = bundled, onLocal = { early.complete(it) })
+        }
+        val published = withTimeoutOrNull(5_000) { early.await() }
+        val networkStillPending = !search.isCompleted
+        release.countDown()
+        search.await()
+
+        assertThat(published).isNotNull()
+        assertThat(networkStillPending).isTrue()
+        assertThat(names(published!!)).containsExactly("Bundled Peak")
+        assertThat(published.stale).isFalse()
+    }
+
     // ── Backoff ─────────────────────────────────────────────────────
 
     /** The 60 s retry backoff runs from when the failure ARRIVED. Stamped before

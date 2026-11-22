@@ -248,8 +248,13 @@ class PeakFinder @Inject constructor(
                 if (restored != null) {
                     workingPeaks = restored
                     // Not a confirmed answer, so "possibly outdated" — unless a
-                    // downloaded pack covers here (see [packCoversHere]).
-                    peaksAreStale = restored.isNotEmpty() && !packCoversHere(location, offlinePeaks)
+                    // downloaded pack covers here (see [packCoversHere]). Judged
+                    // by the restored peaks that will be shown, not by the file:
+                    // a snapshot whose peaks all lie beyond the render distance
+                    // shows nothing, and must not label the bundled summits
+                    // beside it.
+                    peaksAreStale = refreshGeometry(restored, location, obsAlt).isNotEmpty() &&
+                        !packCoversHere(location, offlinePeaks)
                 }
             }
         }
