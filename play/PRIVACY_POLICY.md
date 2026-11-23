@@ -1,11 +1,11 @@
 # Privacy Policy
 
-**Effective date:** 1 August 2026
+**Effective date:** 21 November 2026
 **Applies to:** Geo — the Android app published by nettrash on Google Play (`me.nettrash.geo`). This policy is versioned alongside the app's source code; the most recent commit on `main` is authoritative.
 
 ## TL;DR
 
-Geo doesn't collect any personal information about you, doesn't create accounts, and doesn't use analytics, advertising, or trackers. The only data that ever leaves your device is what's necessary to render the things you ask the app to render: a few network requests to display the map, an approximate-location query to OpenStreetMap when the app looks up nearby mountain peaks, the same approximate coordinates to Open-Meteo for ground elevation and reference pressure, and a parameterless request to NOAA for the planetary K index. Nothing is sent to servers operated by us — we have no servers.
+Geo doesn't collect any personal information about you, doesn't create accounts, and doesn't use analytics, advertising, or trackers. The only data that ever leaves your device is what's necessary to render the things you ask the app to render: a few network requests to display the map, an approximate-location query to public OpenStreetMap Overpass servers when the app looks up nearby mountain peaks, the same approximate coordinates to Open-Meteo for ground elevation and reference pressure, and a parameterless request to NOAA for the planetary K index. Nothing is sent to servers operated by us — we have no servers.
 
 ## What the app accesses, and what each access does
 
@@ -25,7 +25,7 @@ Geo doesn't collect any personal information about you, doesn't create accounts,
 
 ## What goes over the network
 
-**OpenStreetMap Overpass API** (`https://overpass-api.de/api/interpreter`). When you open the Nature tab, the app sends an HTTPS request containing your approximate latitude/longitude (rounded to the same ~110 m grid as the elevation lookups below) and a search radius (5 km) to fetch the list of nodes tagged `natural=peak` near you. The radius is larger only when *you* ask for it: downloading an offline area uses the radius you pick yourself (5 / 10 / 50 / 100 km). The request body contains *only* those coordinates and the radius — no device identifiers, no Advertising ID, no account information. The Overpass API is a free, public service hosted by OpenStreetMap volunteers and governed by the [OpenStreetMap Foundation Privacy Policy](https://osmfoundation.org/wiki/Privacy_Policy).
+**OpenStreetMap Overpass API** (three public servers: `https://overpass-api.de`, `https://overpass.private.coffee` and `https://overpass.openstreetmap.fr`). When you open the Nature tab, the app sends an HTTPS request containing your approximate latitude/longitude (rounded to the same ~110 m grid as the elevation lookups below) and a search radius (5 km) to fetch the list of nodes tagged `natural=peak` near you. The radius is larger only when *you* ask for it: downloading an offline area uses the radius you pick yourself (5 / 10 / 50 / 100 km). The request body contains *only* those coordinates and the radius — no device identifiers, no Advertising ID, no account information. Each search asks *one* of the three servers, starting from a rotating position, and asks the next only if that one doesn't answer usably (for example a network error, an overloaded server, a timeout or a server-side runtime error) — so a single search can reach all three, and every server asked receives exactly the same request. Each is a free, public service run by an association, under its own terms: `overpass-api.de` by FOSSGIS e.V. in Germany ([terms of use](https://www.fossgis.de/arbeitsgruppen/osm-server/nutzungsbedingungen/), [privacy policy](https://www.fossgis.de/datenschutzerkl%C3%A4rung/)); `overpass.private.coffee` by Private.coffee, a non-profit association registered in Austria ([privacy policy](https://private.coffee/privacy.html), which says its web-server IP logs are kept for up to 48 hours); and `overpass.openstreetmap.fr` by OpenStreetMap France ([legal notice](https://www.openstreetmap.fr/mentions-legales/)).
 
 **Google Maps Android SDK.** The Map tab renders map tiles and your-location pin via the Maps SDK for Android. Google is the data controller for those requests; the data flow and Google's use of it are governed by the [Google Maps / Google Earth Additional Terms of Service](https://maps.google.com/help/terms_maps/) and the [Google Privacy Policy](https://policies.google.com/privacy). The Maps SDK is configured with a publishable Maps API key restricted to this app's package + signing certificate.
 
@@ -41,7 +41,9 @@ That's the entire list. There are no other servers contacted. There is no teleme
 
 **Trips and the summit log** — the outings you record on the Stat tab and the ascents you confirm in the summit log live in tables of that same local database, on exactly the same terms.
 
-**Offline peak packs** — an area you download for offline use is stored as plain JSON files under the app's private `files/offline_packs` folder. A pack holds only public OpenStreetMap peak data — name, coordinate, altitude — plus the centre and radius *you* chose; it records nothing about where you have been.
+**Offline peak packs** — an area you download for offline use is stored as plain JSON files under the app's private `files/offline_packs` folder. A pack holds only public OpenStreetMap peak data — name, coordinate, altitude — plus the centre and radius *you* chose and when you downloaded it. A pack downloaded for where you are is centred on your position at that moment.
+
+**Nearby-peaks cache** — separate from the offline packs: after each successful peak search the app saves the peaks it found — public peak data: name, coordinate, altitude — in a single JSON file, `nearby_peaks_cache.json`, in the app's private cache folder, so the Nature view can still show them after a restart, even while the Overpass servers can't be reached; they are then labelled "possibly outdated" unless an offline pack you downloaded covers where you are. It also keeps the point that search was made from — your position at the time, rounded to about 1 km. The next successful search replaces the file, and it is ignored once it is more than 7 days old or you are more than 50 km from that point. Android Auto Backup excludes the app's cache folder, so this file is not part of the backup described below; it is deleted when you clear the app's cache or storage, or uninstall the app.
 
 **System Auto Backup.** Geo leaves Android's standard Auto Backup switched on (`android:allowBackup="true"`), so your device's own backup service may include the app's local data in the backup it makes to *your* Google account and restore it when you set up a new device. That copy is yours: it goes to your account, we are never sent it and cannot read it, and it is governed by [Android's Auto Backup behaviour](https://developer.android.com/guide/topics/data/autobackup) and Google's privacy policy rather than by us. If you would rather it didn't happen, turn backup off for the device — or for Geo specifically — in your Android settings.
 
@@ -62,7 +64,7 @@ Listing them explicitly because the negatives matter as much as the positives:
 | Service | What it sees | Whose policy applies |
 |---|---|---|
 | Google Maps SDK for Android | Coarse position + viewport requests for tile rendering | Google's |
-| OpenStreetMap Overpass API | Approximate coordinates + search radius | OpenStreetMap Foundation's |
+| OpenStreetMap Overpass API (three public servers) | Approximate coordinates + search radius — the same request at each server asked | FOSSGIS e.V.'s (`overpass-api.de`), Private.coffee's (`overpass.private.coffee`) and OpenStreetMap France's (`overpass.openstreetmap.fr`), each for its own server |
 | Open-Meteo API | Approximate coordinates (~110 m grid) to look up peak / vantage-point ground elevation + reference pressure | Open-Meteo's |
 | NOAA Space Weather Prediction Center | **Nothing** — a fixed URL with no parameters, byte-identical for every user, returning space-weather indices and forecasts | Public domain (U.S. Government work); NOAA's |
 | Google ARCore | Camera frames + IMU data, **on-device only** | Google's |
@@ -77,7 +79,7 @@ Geo is rated for general audiences (Everyone / PEGI 3) and is not directed at ch
 
 ## International data transfers
 
-The Overpass API and Google Maps endpoints are global services; requests may transit servers in any country. The data sent (coordinates + radius for Overpass, map-viewport requests for Maps) does not contain personal data under GDPR Article 4(1) when used in this app — it's not combined with any identifier we hold.
+The three Overpass API servers and the Google Maps endpoints are global services; requests may transit servers in any country. The Overpass servers' operators are associations based in Germany (FOSSGIS e.V.), Austria (Private.coffee) and France (OpenStreetMap France). The data sent (coordinates + radius for Overpass, map-viewport requests for Maps) does not contain personal data under GDPR Article 4(1) when used in this app — it's not combined with any identifier we hold.
 
 ## Your rights
 

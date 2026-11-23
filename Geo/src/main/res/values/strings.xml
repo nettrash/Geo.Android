@@ -278,6 +278,24 @@
 
     <!-- AR Nature view -->
     <string name="ar_about_title">About the Nature view</string>
+    <!-- Peak-count honesty: the floor is hiding peaks, or the set shown is not
+         a confirmed-current answer (#25, #26). -->
+    <string name="nature_peaks_possibly_outdated">possibly outdated</string>
+    <string name="nature_peaks_show_all">Show all</string>
+    <plurals name="nature_peaks_hidden_count">
+        <item quantity="one">(%1$d hidden)</item>
+        <item quantity="other">(%1$d hidden)</item>
+    </plurals>
+    <string name="nature_peaks_floor_hides_one">%1$d m floor hides 1 peak</string>
+    <!-- Every count but one: minAltitudeFloorPillText picks
+         nature_peaks_floor_hides_one for exactly one peak, so it never reaches
+         this plural. Both items read the same on purpose, because the device's
+         plural rules, not English's, pick the item: a Japanese phone has no
+         "one" and picks "other" for 1, a Russian one picks "one" for 21. -->
+    <plurals name="nature_peaks_floor_hides_all">
+        <item quantity="one">%1$d m floor hides all %2$d peaks</item>
+        <item quantity="other">%1$d m floor hides all %2$d peaks</item>
+    </plurals>
     <string name="ar_about_undetermined">The Nature view shows nearby mountain peaks overlaid on the camera. Continue to choose whether to grant camera access.</string>
     <string name="ar_about_denied">The Nature view shows nearby mountain peaks overlaid on the camera. Camera access is currently turned off for Geo. You can re-enable it in Android Settings and return to this tab.</string>
     <string name="ar_unavailable_title">ARCore Not Available</string>
@@ -309,6 +327,8 @@
     <string name="offline_download_here">Download here</string>
     <string name="offline_name_area">Name this area</string>
     <string name="offline_rename_title">Rename area</string>
+    <string name="offline_download_failed">Couldn\'t download peaks — no peak server answered. Try again later.</string>
+    <string name="offline_update_failed">Couldn\'t update peaks — no peak server answered. Try again later.</string>
 
     <!-- Permission banner (location / motion) -->
     <string name="permissions_banner_headline_both">Location &amp; motion access required</string>

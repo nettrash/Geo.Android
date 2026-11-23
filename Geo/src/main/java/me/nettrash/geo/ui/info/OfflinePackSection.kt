@@ -1,5 +1,6 @@
 package me.nettrash.geo.ui.info
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,10 +14,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -46,6 +50,9 @@ import java.util.Locale
 
 private val ACCENT = Color(0xFFFF9800)
 
+/** The app's amber for a hint that something needs attention. */
+private val WARNING = Color(0xFFFFC107)
+
 /**
  * Info-tab card for the offline expedition pack: a summary + a button that
  * opens the management dialog (download current area + saved-pack list).
@@ -57,6 +64,7 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
     val downloading by viewModel.offlinePackDownloading.collectAsState()
     val status by viewModel.offlinePackStatus.collectAsState()
     val updatingId by viewModel.offlinePackUpdatingId.collectAsState()
+    val downloadError by viewModel.offlinePackError.collectAsState()
     val location by viewModel.locationManager.location.collectAsState()
     var showManager by remember { mutableStateOf(false) }
 
@@ -70,6 +78,13 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
             InfoRow(if (status.isEmpty()) stringResource(R.string.offline_downloading) else status) {
                 MonoText("…")
             }
+        }
+        downloadError?.let { message ->
+            OfflinePackErrorNote(
+                message,
+                onDismiss = { viewModel.dismissOfflinePackError() },
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(4.dp),
@@ -91,13 +106,41 @@ fun OfflineExpeditionCard(viewModel: GeoViewModel) {
             packs = packs,
             downloading = downloading,
             status = status,
+            error = downloadError,
             hasLocation = location != null,
             updatingId = updatingId,
             onDownload = { name, radius -> viewModel.downloadOfflinePack(name, radius) },
             onUpdate = { viewModel.updateOfflinePack(it) },
             onDelete = { viewModel.deleteOfflinePack(it) },
             onRename = { pack, newName -> viewModel.renameOfflinePack(pack, newName) },
+            onDismissError = { viewModel.dismissOfflinePackError() },
             onDismiss = { showManager = false }
+        )
+    }
+}
+
+/**
+ * Why the last pack download or update saved nothing — no peak server answered
+ * — shown where the download status is (the Info card, the pack manager, the
+ * Map tab's bar) instead of leaving a failed download looking like it worked.
+ * Tap to dismiss; the next download or update clears it anyway.
+ */
+@Composable
+fun OfflinePackErrorNote(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onDismiss)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(message, color = WARNING, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(8.dp))
+        Icon(
+            Icons.Default.Close,
+            contentDescription = stringResource(R.string.action_close),
+            tint = Color.White.copy(alpha = 0.7f),
+            modifier = Modifier.size(14.dp)
         )
     }
 }
@@ -107,12 +150,14 @@ private fun OfflinePackManagerDialog(
     packs: List<OfflinePack>,
     downloading: Boolean,
     status: String,
+    error: String?,
     hasLocation: Boolean,
     updatingId: String?,
     onDownload: (String, Double) -> Unit,
     onUpdate: (OfflinePack) -> Unit,
     onDelete: (OfflinePack) -> Unit,
     onRename: (OfflinePack, String) -> Unit,
+    onDismissError: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
@@ -135,6 +180,10 @@ private fun OfflinePackManagerDialog(
 
                 Text(stringResource(R.string.offline_section_download), color = ACCENT, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
+                error?.let { message ->
+                    OfflinePackErrorNote(message, onDismiss = onDismissError)
+                    Spacer(Modifier.height(4.dp))
+                }
                 if (!hasLocation) {
                     Text(stringResource(R.string.offline_waiting_gps), color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
                 } else {

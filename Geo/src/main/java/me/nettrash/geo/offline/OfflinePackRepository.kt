@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import me.nettrash.geo.R
 import me.nettrash.geo.data.model.NearbyPeak
 import me.nettrash.geo.util.PeakFinder
 import java.util.Locale
@@ -65,22 +66,44 @@ class OfflinePackRepository @Inject constructor(
     private val _combinedPeaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
     val combinedPeaks: StateFlow<List<NearbyPeak>> = _combinedPeaks.asStateFlow()
 
+    /** Why the last [createPack] / [updatePack] saved nothing — no peak server
+     *  answered — for the pack UI to show; null when there is nothing to say.
+     *  Cleared when the next download or update starts, or when dismissed. */
+    private val _downloadError = MutableStateFlow<String?>(null)
+    val downloadError: StateFlow<String?> = _downloadError.asStateFlow()
+
     init {
         scope.launch { reseed() }
     }
 
+    fun clearDownloadError() {
+        _downloadError.value = null
+    }
+
     /**
      * Prefetch and persist a pack centred on (lat, lon) out to [radiusKm].
-     * No-ops if a download is already running.
+     * No-ops if a download is already running. If no peak server answers,
+     * nothing is saved and [downloadError] says so; an answer with no peaks is
+     * a real answer, and is saved.
      */
     suspend fun createPack(name: String, centerLat: Double, centerLon: Double, radiusKm: Double) {
         // Atomic check-then-set so a double-tap (or a caller on a multi-threaded
         // dispatcher) can't slip two concurrent downloads past a plain read+write.
         if (!_isDownloading.compareAndSet(expect = false, update = true)) return
+        _downloadError.value = null
         _statusText.value = "Finding peaks…"
         try {
             // 1. Peaks across the whole radius (one throttled Overpass query).
-            val osm = peakFinder.fetchPeaksForArea(centerLat, centerLon, radiusKm * 1000.0)
+            val osm = when (val outcome = peakFinder.fetchPeaksForArea(centerLat, centerLon, radiusKm * 1000.0)) {
+                // No peak server answered. A 0-peak pack saved from that would
+                // read as "this area has no peaks" on the summit with no signal
+                // it was downloaded for — so save nothing, and say why.
+                is PeakFinder.PeakOutcome.Failure -> {
+                    _downloadError.value = context.getString(R.string.offline_download_failed)
+                    return
+                }
+                is PeakFinder.PeakOutcome.Success -> outcome.peaks
+            }
             // Keep the CLOSEST peaks when capping — Overpass returns nodes in
             // arrival order, not by distance, so a naive take could drop nearby
             // peaks while keeping far ones. Mirrors the live PeakFinder path.
@@ -127,17 +150,26 @@ class OfflinePackRepository @Inject constructor(
      * its stored data in place (same id / name / created date). Use it to pick up
      * new OpenStreetMap peaks, or to complete a download that was partial.
      *
-     * A failed or empty fetch (offline, Overpass down) is IGNORED — an empty
-     * result almost always means the request didn't get through, not that a
-     * once-populated area is suddenly peakless, so an update attempt can never
-     * wipe a good pack. Mirrors iOS `OfflinePackManager.updatePack`.
+     * A failed fetch (offline, every Overpass mirror down) keeps the pack as it
+     * is and says so through [downloadError]. An empty answer is IGNORED — a
+     * once-populated area does not suddenly become peakless — so an update
+     * attempt can never wipe a good pack. Mirrors iOS
+     * `OfflinePackManager.updatePack`.
      */
     suspend fun updatePack(pack: OfflinePack) {
         if (!_isDownloading.compareAndSet(expect = false, update = true)) return
+        _downloadError.value = null
         _updatingPackId.value = pack.id
         _statusText.value = "Updating…"
         try {
-            val osm = peakFinder.fetchPeaksForArea(pack.centerLat, pack.centerLon, pack.radiusKm * 1000.0)
+            val osm = when (val outcome = peakFinder.fetchPeaksForArea(pack.centerLat, pack.centerLon, pack.radiusKm * 1000.0)) {
+                // No answer: the saved pack stays exactly as it is.
+                is PeakFinder.PeakOutcome.Failure -> {
+                    _downloadError.value = context.getString(R.string.offline_update_failed)
+                    return
+                }
+                is PeakFinder.PeakOutcome.Success -> outcome.peaks
+            }
             val peaks = osm.sortedBy { it.distance }.take(maxPackPeaks)
             if (peaks.isEmpty()) return   // never overwrite a good pack with nothing
 

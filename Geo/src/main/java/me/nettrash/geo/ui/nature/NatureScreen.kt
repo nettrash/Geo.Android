@@ -3,6 +3,7 @@ package me.nettrash.geo.ui.nature
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.hardware.GeomagneticField
 import android.hardware.SensorManager
 import android.net.Uri
@@ -69,13 +70,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -250,6 +255,9 @@ private fun ArScene(
     // the projection choke point and every consumer shift coherently).
     val userAlignmentDeg by controller.userAlignmentDeg.collectAsState()
     val barometerHeight by viewModel.barometerManager.height.collectAsState()
+    // Peaks are the last known set (restored from disk, or surviving a failed
+    // search) rather than a confirmed-current answer — the top bar says so.
+    val peaksAreStale by viewModel.peaksAreStale.collectAsState()
 
     // ONE observer altitude for every AR consumer (the horizon line, the marker
     // projection and the tap hit-test), so none can vertically detach from the
@@ -271,6 +279,15 @@ private fun ArScene(
     val filteredPeaks = remember(peaks, minPeakAltitude) {
         if (minPeakAltitude < 1f) peaks else peaks.filter { it.altitude >= minPeakAltitude }
     }
+    // How many peaks the floor is hiding, and whether it is the reason nothing
+    // is drawn. The floor is absolute and persisted in SharedPreferences, and
+    // the track used to accept a plain tap, so one stray touch could park it at
+    // several kilometres and keep it across launches — which hides every peak in
+    // flat country (nothing near Belgrade tops 511 m). The count is the
+    // post-filter count, so that looked exactly like a failed search; now it
+    // says so, and one tap clears the floor. Mirrors iOS.
+    val hiddenPeakCount = peaks.size - filteredPeaks.size
+    val filterHidesEverything = minPeakAltitude >= 1f && peaks.isNotEmpty() && filteredPeaks.isEmpty()
 
     // Freeze-frame capture: the Filament camera surface renders via Metal/GL and
     // reads back BLACK through a normal view capture, so the shutter grabs it
@@ -483,6 +500,33 @@ private fun ArScene(
             Icon(Icons.Default.Terrain, null, tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
             Text("${filteredPeaks.size}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            if (hiddenPeakCount > 0) {
+                // Say what the floor is hiding rather than leaving `0` to be
+                // read as "no peaks found".
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    pluralStringResource(
+                        R.plurals.nature_peaks_hidden_count,
+                        hiddenPeakCount,
+                        hiddenPeakCount
+                    ),
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            if (peaksAreStale && peaks.isNotEmpty()) {
+                // Peaks from disk or from before a failed refresh: keep them,
+                // but never present them as current.
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    stringResource(R.string.nature_peaks_possibly_outdated),
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontStyle = FontStyle.Italic
+                )
+            }
 
             Spacer(Modifier.weight(1f))
 
@@ -565,6 +609,45 @@ private fun ArScene(
                         .background(Color.Black.copy(alpha = 0.55f))
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 )
+            }
+
+            // The floor is hiding every peak we have. Same pill styling as the
+            // alignment chip, one tap to get the horizon back — without it the
+            // only way out was finding the thin track on the right edge and
+            // dragging it down by hand. Mirrors iOS.
+            if (filterHidesEverything) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable {
+                            minPeakAltitude = 0f
+                            naturePrefs.edit { putFloat(KEY_MIN_PEAK_ALT, 0f) }
+                        }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "⊘",
+                        color = Color(0xFFFF9800),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        minAltitudeFloorPillText(LocalResources.current, minPeakAltitude.toInt(), peaks.size),
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        stringResource(R.string.nature_peaks_show_all),
+                        color = Color(0xFFFF9800),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
 
@@ -656,15 +739,34 @@ fun alignmentOffsetDegrees(base: Double, panTranslationDp: Double): Double =
     (base + panTranslationDp / ALIGNMENT_PAN_DP_PER_DEGREE)
         .coerceIn(-ALIGNMENT_MAX_OFFSET_DEG, ALIGNMENT_MAX_OFFSET_DEG)
 
+/**
+ * The floor pill's text: "600 m floor hides 1 peak" for exactly one hidden
+ * peak, "600 m floor hides all N peaks" for any other count. The count picks
+ * the wording, as in iOS `minAltitudeFloorPillText`, not the device's plural
+ * rules: the app ships English text only, and a plural's item is picked by the
+ * rules of the language the phone is set to. Japanese has no `one` ("hides all
+ * 1 peaks"), and Russian counts 21 as `one` ("hides 21 peak"). Every other
+ * count still goes through the plural, which keeps lint's PluralsCandidate
+ * quiet where a plain string with "%2$d peaks" would not.
+ */
+internal fun minAltitudeFloorPillText(res: Resources, floorMetres: Int, hiddenCount: Int): String =
+    if (hiddenCount == 1) {
+        res.getString(R.string.nature_peaks_floor_hides_one, floorMetres)
+    } else {
+        res.getQuantityString(R.plurals.nature_peaks_floor_hides_all, hiddenCount, floorMetres, hiddenCount)
+    }
+
 /** Everest — the top of the min-altitude filter's range. */
 private const val MAX_FILTER_ALT = 8848f
 
 /**
  * Vertical min-altitude filter. The handle's height on the track maps to a
  * minimum peak altitude (0 at the bottom → Everest at the top); the orange band
- * above the handle is the altitude range still shown. Tap or drag anywhere on the
- * track to set it; the value rounds to a tidy 10 m. Session-only, unobtrusive,
- * matching the view's pill styling. Mirrors iOS `AltitudeFilterSlider`.
+ * above the handle is the altitude range still shown. Drag only — it used to
+ * accept a plain tap anywhere on the 44x200 dp track, which jumped the floor to
+ * whatever height was tapped (up to Everest) and SharedPreferences kept it
+ * forever, silently blanking the tab in flat country. The value rounds to a tidy
+ * 10 m. Mirrors iOS `AltitudeFilterSlider`.
  */
 @Composable
 private fun AltitudeFilterSlider(
@@ -694,7 +796,6 @@ private fun AltitudeFilterSlider(
             modifier = Modifier
                 .width(44.dp)
                 .height(200.dp)
-                .pointerInput(Unit) { detectTapGestures { setFromY(it.y, size.height.toFloat()) } }
                 .pointerInput(Unit) {
                     detectVerticalDragGestures { change, _ ->
                         change.consume()

@@ -140,6 +140,18 @@ class GeoViewModel @Inject constructor(
     private val _peaks = MutableStateFlow<List<NearbyPeak>>(emptyList())
     val peaks: StateFlow<List<NearbyPeak>> = _peaks.asStateFlow()
 
+    /** True while [peaks] is the last known set rather than a confirmed
+     *  current answer (restored from disk, or surviving a failed search) —
+     *  unless a downloaded offline pack covers here, the explicit offline
+     *  answer. */
+    private val _peaksAreStale = MutableStateFlow(false)
+    val peaksAreStale: StateFlow<Boolean> = _peaksAreStale.asStateFlow()
+
+    /** Why the last peak search failed (`"overpass-api.de: HTTP 502; …"`), for
+     *  logcat and the console. Cleared by the next success. */
+    private val _peakSearchError = MutableStateFlow<String?>(null)
+    val peakSearchError: StateFlow<String?> = _peakSearchError.asStateFlow()
+
     private val trackingMutableData = mutableListOf<DataPoint>()
 
     init {
@@ -544,12 +556,27 @@ class GeoViewModel @Inject constructor(
             // vertically than GPS) for the horizon-visibility cut; 0 means the
             // sensor hasn't produced a value yet, so fall back to GPS.
             val obsAlt = barometerManager.height.value.takeIf { it > 0 } ?: loc.altitude
-            val results = peakFinder.searchPeaks(
+            val result = peakFinder.searchPeaks(
                 loc, _mountainsData.value, _peaks.value,
                 offlinePackRepository.combinedPeaks.value,
-                observerAltitude = obsAlt
+                observerAltitude = obsAlt,
+                // The offline-pack and bundled peaks (and a snapshot restored
+                // from disk) need no network: show them as soon as they are
+                // merged, not after a failover that can take ~25 s.
+                onLocalPeaks = { local ->
+                    _peaks.value = local.peaks
+                    _peaksAreStale.value = local.stale
+                }
             )
-            _peaks.value = results
+            _peaks.value = result.peaks
+            // "These are the peaks we have, but they are not confirmed
+            // current" — restored from disk, or kept alive through a failed
+            // search. The Nature view says so instead of showing a bare count
+            // that reads the same as a live result. Both are as the last real
+            // outcome left them (PeakFinder keeps them), so a reuse tick
+            // carries them over instead of clearing them.
+            _peaksAreStale.value = result.stale
+            _peakSearchError.value = result.error
         }
     }
 
@@ -561,6 +588,11 @@ class GeoViewModel @Inject constructor(
     val offlinePackDownloading: StateFlow<Boolean> = offlinePackRepository.isDownloading
     val offlinePackStatus: StateFlow<String> = offlinePackRepository.statusText
     val offlinePackUpdatingId: StateFlow<String?> = offlinePackRepository.updatingPackId
+    /** Why the last pack download or update saved nothing (no peak server
+     *  answered), or null. */
+    val offlinePackError: StateFlow<String?> = offlinePackRepository.downloadError
+
+    fun dismissOfflinePackError() = offlinePackRepository.clearDownloadError()
 
     /** Download a pack for the current location at [radiusKm]. No-ops with no fix. */
     fun downloadOfflinePack(name: String, radiusKm: Double) {
