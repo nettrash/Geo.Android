@@ -8,6 +8,60 @@ one recorded here.
 
 ## [Unreleased]
 
+## [1.3] — 2026-11-23
+
+Nearby peaks you can rely on. Geo shows the peaks it already knows straight
+away, asks three map servers instead of one, remembers its last good answer,
+and says so when the list is stale or your altitude floor is hiding every
+peak, instead of quietly reporting zero. The Wear app moves to 1.3 alongside
+the phone, with no changes of its own.
+
+### Changed
+- **Three map servers instead of one.** Nearby peaks come from
+  OpenStreetMap's Overpass service, and Geo used to ask a single server. When
+  that server was overloaded, the Nature tab showed "0 peaks" with no
+  explanation. Geo now tries three public servers with
+  worldwide data, moving on when one is busy or slow, and stops after
+  30 seconds rather than hanging:
+  overpass-api.de (FOSSGIS e.V.), overpass.private.coffee (Private.coffee)
+  and overpass.openstreetmap.fr (OpenStreetMap France). A busy server's empty
+  reply is recognised as "busy", not taken to mean there are no peaks here.
+- **The peaks Geo already has come first.** The built-in mountains within
+  80 km and the peaks of any downloaded offline area are shown at once,
+  before the network answers, and they stay on screen if the search fails.
+- **The last good answer is remembered.** It's kept in the app's cache for up
+  to 7 days and reused within 50 km of where it was fetched (its centre is
+  stored rounded to about 1 km). So reopening Geo with no signal still shows
+  your peaks, marked "possibly outdated" until a fresh answer arrives. The
+  label isn't shown where a downloaded offline area covers you. The privacy
+  policy describes the cache and names the three servers.
+- **Better-paced refreshes.** Geo now refreshes at least every 15 minutes
+  even if you don't move, instead of only after you've walked 500 m. After a
+  failed search it waits a minute before asking again, so the 5-second
+  refresh doesn't hammer a server that's already struggling.
+- **Geo installs on devices without GPS.** The app had declared GPS as
+  required, which kept it off Wi-Fi-only tablets, Chromebooks and Android XR
+  headsets. Position comes from Wi-Fi and cell positioning there. Only the
+  satellite altitude needs GPS, and the barometer is preferred where there
+  is one.
+
+### Fixed
+- **Peaks found online no longer vanish an hour into an outage.** They now
+  expire only once a server has actually answered.
+- **The minimum-altitude floor could hide every peak and report zero.** One
+  stray tap on the slider could set a floor of several kilometres. The
+  slider now needs a deliberate drag, and the peak count says how many peaks
+  the floor hides. When it hides them all, a pill says so ("hides all 12
+  peaks") and resets the floor in one tap.
+- **A failed offline-area download no longer saves an empty area** that read
+  as "no peaks here". Nothing is saved, and the Info card, the pack dialog
+  and the Map tab say why. A failed update keeps the area you already had.
+- **The same summit no longer shows twice** after a connection problem, as a
+  built-in mountain next to its own OpenStreetMap entry.
+- **Peak searches near large offline areas are much faster.** Removing
+  duplicates took seconds of work per search with a few big areas
+  downloaded; it now takes about a tenth of a second.
+
 ## [1.2] — 2026-08-01
 
 A Nature-view rebuild focused on one thing — naming the peaks you can see — a

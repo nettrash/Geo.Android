@@ -24,7 +24,12 @@
     <uses-feature android:name="android.hardware.sensor.barometer" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="true" />
+    <!-- Optional: the position comes from the fused provider, which falls back
+         to Wi-Fi/cell positioning without a GPS chip. Only the satellite
+         altitude needs GPS, and the barometer is preferred where there is one.
+         Required, it kept the app off Wi-Fi-only tablets, ChromeOS and
+         Android XR devices. -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <application
         android:name=".GeoApplication"

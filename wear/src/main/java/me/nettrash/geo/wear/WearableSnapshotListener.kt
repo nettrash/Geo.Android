@@ -16,7 +16,7 @@ class WearableSnapshotListener : WearableListenerService() {
 
     override fun onMessageReceived(event: MessageEvent) {
         if (event.path != PATH_SNAPSHOT) return
-        val payload = event.data ?: return
+        val payload = event.data
         val text = runCatching { String(payload, Charsets.UTF_8) }.getOrNull() ?: return
         val token = runCatching {
             json.decodeFromString<WearInformationToken>(text)

@@ -28,7 +28,7 @@ val watchVersionCode: Int = sharedVersionCode + 1_000_000
 // watch AAB). Better: move `versionName` into `version.properties` next to
 // `versionCode` and have both modules fall back to it.
 val resolvedVersionName: String =
-    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.2"
+    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.3"
 
 // Release signing — resolve the SAME keystore the phone module uses, from
 // keystore.properties (dev machines) or GEO_* env vars (CI). Null when neither
@@ -104,6 +104,15 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    // As in `Geo/build.gradle.kts`: the AndroidX .so files arrive prestripped and
+    // there is no NDK here, so stripping can only warn "Unable to strip …".
+    packaging {
+        jniLibs {
+            keepDebugSymbols += setOf(
+                "**/*.so"
+            )
+        }
     }
 }
 

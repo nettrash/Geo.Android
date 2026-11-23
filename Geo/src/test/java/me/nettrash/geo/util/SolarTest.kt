@@ -102,7 +102,7 @@ class SolarTest {
             sr.timeInMillis = times.sunrise!!
             assertEquals(q.get(Calendar.YEAR), sr.get(Calendar.YEAR))
             assertEquals(q.get(Calendar.DAY_OF_YEAR), sr.get(Calendar.DAY_OF_YEAR))
-            assertTrue(times.sunrise!! - query < 3 * 3600 * 1000L)  // ~19 min, not 24 h
+            assertTrue(times.sunrise - query < 3 * 3600 * 1000L)  // ~19 min, not 24 h
         } finally {
             TimeZone.setDefault(original)
         }

@@ -1,8 +1,7 @@
-Version 1.2
+Version 1.3
 
-• Nature view rebuilt to name the peaks you see: a horizon with N/E/S/W markers and a label on each visible summit.
-• A min-altitude slider hides small hills.
-• Offline areas are peaks-only: smaller, quicker.
-• New: Magnetic Conditions — what a geomagnetic storm does to your compass, GPS and aurora chances. Alerts off by default.
-• Widget and Wear tile wake less often: better battery, still current when you look.
-• Fixed: the altitude graph keeps tracking when GPS drops.
+• Nearby peaks are more reliable: Geo asks three OpenStreetMap servers instead of one, and a busy server no longer reads as "no peaks here".
+• Built-in mountains and offline-area peaks show at once, even with no signal.
+• The last peak list is remembered, marked "possibly outdated" until a fresh one arrives.
+• If the altitude floor hides every peak, Geo says so and resets it in one tap.
+• A failed offline download no longer saves an empty area.

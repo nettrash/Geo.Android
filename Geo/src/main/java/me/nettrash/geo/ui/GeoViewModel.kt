@@ -208,7 +208,7 @@ class GeoViewModel @Inject constructor(
             locationManager.closestMountainDistance
         ) { peak, dist ->
             if (peak != null && dist != null && dist < summitProximityRadiusM &&
-                peak.coordinates?.latitude != null && peak.coordinates?.longitude != null
+                peak.coordinates?.latitude != null && peak.coordinates.longitude != null
             ) peak else null
         }
             .distinctUntilChanged { a, b -> summitKey(a) == summitKey(b) }

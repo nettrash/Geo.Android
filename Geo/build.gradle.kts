@@ -17,7 +17,8 @@ plugins {
 // The file IS tracked in git so the bump propagates between machines
 // (commit it after a release).
 //
-// versionName is human (semver). Defaults to "1.1" but can be overridden
+// versionName is human (semver). Defaults to `resolvedVersionName` below (keep
+// it in step with `wear/build.gradle.kts`) but can be overridden
 // at the command line with `-PversionName=1.2.3`.
 val versionPropsFile = rootProject.file("version.properties")
 val versionProps = Properties().apply {
@@ -44,7 +45,7 @@ val storedVersionCode: Int = run {
 }
 
 val resolvedVersionName: String =
-    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.2"
+    (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.3"
 
 // Allow opting out of the bump for one build (useful for CI which doesn't
 // want to mutate the tracked file on the runner): `-PnoBump`.

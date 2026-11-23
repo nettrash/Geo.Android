@@ -708,10 +708,10 @@ private fun PeakBearingRow(
     // (heading-rate) recomposition; key declination on altitude too so the
     // cached value can't go stale when altitude updates.
     val bearing = remember(userLat, userLon, peakLat, peakLon) {
-        GeoCalculations.bearing(userLat!!, userLon!!, peakLat!!, peakLon!!)
+        GeoCalculations.bearing(userLat, userLon, peakLat, peakLon)
     }
     val declination = remember(userLat, userLon, userAlt) {
-        GeomagneticField(userLat!!.toFloat(), userLon!!.toFloat(), userAlt.toFloat(), System.currentTimeMillis()).declination
+        GeomagneticField(userLat.toFloat(), userLon.toFloat(), userAlt.toFloat(), System.currentTimeMillis()).declination
     }
     val trueHeading = (((heading + declination) % 360) + 360) % 360
     val rotation = (bearing - trueHeading).toFloat()
